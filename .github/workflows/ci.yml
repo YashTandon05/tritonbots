@@ -66,6 +66,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@v3
       - run: uv venv --python 3.11
+      # Each `run:` step is a fresh shell, so `uv pip install` alone never
+      # activates the venv for later steps -- make proto/lint/test would
+      # silently fall through to system python otherwise. Putting the venv's
+      # bin on PATH here makes every subsequent step use it.
+      - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - run: uv pip install -e ".[dev]"
       - run: uv pip install -e third_party/rsim
       - run: make proto
