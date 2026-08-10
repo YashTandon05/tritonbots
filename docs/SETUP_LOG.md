@@ -493,3 +493,32 @@ Notes:        Each stub docstring carries the warning attached to it in
               NotImplementedError with no task id. That is correct and is not
               a stub — they are abstract hooks for subclasses, and SETUP.md
               writes them that way. The task ids live in the subclasses.
+
+## Step 12 — Runnable apps            [PASS]
+Verification: SETUP.md Step 12 specifies no verification command beyond
+              "run viz_rsim once without --realtime and write the steps/s
+              number down". Ran all three:
+              - `python -m tbots.apps.viz_rsim`
+                -> 3600 ticks in 7.59s = 474 steps/s (7.9x realtime)
+                Full 6v6 rSim + GoToPoint x6 + a vision packet published every
+                tick, so this is end-to-end, not a bare physics number.
+              - `python -m tbots.apps.ref_monitor --help` -> parses; the live
+                path needs a running game controller (Step 13), not yet built.
+              - `python -m tbots.apps.wiggle` -> NotImplementedError: TASK-012,
+                as specified.
+Deviations:   All three files transcribed verbatim from SETUP.md 12.1-12.3,
+              including wiggle.py's module-level `raise` (it is written that
+              way in the spec — the file is a placeholder, not an importable
+              module).
+Notes:        THE STEPS/S NUMBER: 474 steps/s, 6v6, WSL2, with vision
+              publishing on. SETUP.md asks for this to go in the README —
+              there is no README.md in the repo yet; SETUP.md creates it in an
+              appendix section after Step 17, which is outside the steps I was
+              asked to build. Recording it here so it is not lost.
+
+              Throughput is dominated by ODE contact handling, not by the
+              publisher: a deliberately pathological run with all 12 robots
+              commanded vx=1.0 into each other measured 97 steps/s 6v6, while
+              1v1 measured 498 steps/s. Treat 474 as representative of normal
+              play and expect it to sag in crowded scrimmages. Benchmark
+              properly under TASK-055 before making a scaling decision on it.
