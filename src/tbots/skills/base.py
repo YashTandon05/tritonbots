@@ -7,7 +7,8 @@ Tuesday and drop it into the match stack on Wednesday by editing a config.
 
 from __future__ import annotations
 
-from typing import Callable, Literal, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Literal, Protocol, runtime_checkable
 
 from tbots.core.command import RobotCommand
 from tbots.core.state import WorldState

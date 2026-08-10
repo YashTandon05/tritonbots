@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import socket
-
 from tbots._pb.state.ssl_gc_referee_message_pb2 import Referee
 from tbots.core.gamestate import HALT, GameState, Play
 from tbots.core.units import mm_to_m

@@ -561,3 +561,52 @@ Notes:        Two things about these tests a reader should not mistake for
 
               `make test` depends on `make proto`, so CI regenerates the
               protobufs before running; _pb is gitignored, as intended.
+
+## Step 15 (follow-up) — pin ruff rule set, fix lint            [PASS]
+Verification: `make lint` -> ruff "All checks passed!" + mypy "Success: no
+              issues found in 6 source files"
+              `pytest -q` -> 10 passed, 1 skipped (unchanged)
+              Re-ran the app smoke checks afterwards, because the autofixes
+              touched command.py's clamp helper and the referee/rsim modules:
+              viz_rsim 440 steps/s; referee decode still FREE_KICK/ours/
+              (-1.0, 0.5)/5.0s; clamped() still saturates to 3.0 / -3.0 / 6.5
+              / 1.0.
+              This clears the red-CI caveat recorded in the Step 15 entry
+              above — ci.yml's `make lint` step now passes.
+Deviations:   Reverses the earlier "transcribe, do not reformat" position on
+              SETUP.md-sourced code, on explicit instruction from the human.
+              Autofixes applied across src/, tests/ and scripts/: unused
+              imports dropped, typing.Sequence -> collections.abc.Sequence,
+              quoted self-referential annotations unquoted (safe under
+              `from __future__ import annotations`), import order normalised,
+              f-string `str(x)` -> `x!s`, redundant f-prefixes removed, and
+              in core/command.py the clamp helper
+              `lo if v < lo else hi if v > hi else v` -> `lo if v < lo else
+              min(v, hi)`. All semantics-preserving, NaN behaviour included.
+Notes:        THE RULE SET IS NOW PINNED in pyproject.toml under
+              [tool.ruff.lint]: E, W, F, I, UP, B, C4. This is the actual fix
+              — with no explicit `select`, ruff lints against whatever its
+              current release defaults to, so a routine dependency refresh can
+              turn CI red with no code change. That is exactly how the
+              original failure appeared (SETUP.md's pyproject pinned only
+              line-length; ruff 0.16.2's defaults had moved).
+
+              RUF and FURB are deliberately NOT selected. Their only two
+              findings here were noise and neither is worth editing code for:
+                - RUF046 on `int(round(self._dt * 1000.0))` in backends/rsim.py
+                  — redundant, but transcribed from SETUP.md and reads as
+                  deliberate.
+                - RUF012 on SSLEnv.metadata — that is the Gymnasium
+                  convention, and gym.Env types it as a plain dict itself.
+              Adding a rule family later is a decision to take on purpose.
+
+              REVERTED: the fix pass had also reformatted our VENDORED FORKS —
+              third_party/rsoccer (20 files) and third_party/rsim
+              (src/robosim/__init__.py). Restyling upstream code we track as a
+              fork buys nothing, is not covered by `make lint` (which lints
+              only `src tests`), and would conflict on every upstream merge.
+              Both submodule working trees were restored with `git checkout --
+              .`; the committed Python 3.11 build fixes in our rSim fork are
+              untouched. The discarded diffs are saved as
+              rsim-ruff-churn.patch / rsoccer-ruff-churn.patch in this
+              session's scratchpad if anyone wants them back.

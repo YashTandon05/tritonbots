@@ -39,6 +39,27 @@ where = ["src"]
 line-length = 100
 target-version = "py311"
 
+# PIN THE RULE SET. Without an explicit `select`, ruff lints against whatever
+# its current release considers default, so a routine `uv pip install -e .[dev]`
+# can turn CI red without a line of our code changing. Adding a rule family here
+# is a deliberate decision; drifting into one is not.
+#
+# Deliberately excluded: RUF and FURB. Both are opinionated and churny, and the
+# only two findings they produced against this codebase were noise --
+# `int(round(...))` in backends/rsim.py (redundant, but it is transcribed from
+# docs/SETUP.md and reads as intentional), and RUF012 on SSLEnv.metadata, which
+# is the Gymnasium convention and is typed as a plain dict by gym.Env itself.
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort — import order
+  "UP",   # pyupgrade — keep us on 3.11 idiom
+  "B",    # flake8-bugbear — real bug patterns
+  "C4",   # flake8-comprehensions
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 timeout = 120

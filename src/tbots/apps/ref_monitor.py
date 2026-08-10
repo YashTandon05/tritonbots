@@ -32,8 +32,8 @@ def main() -> None:
                 last_counter = gs.counter
                 print(
                     f"[{gs.counter:5d}] {gs.play.name:<16} "
-                    f"ours={str(gs.ours):<5} "
-                    f"move={str(gs.can_move):<5} touch={str(gs.can_touch_ball):<5} "
+                    f"ours={gs.ours!s:<5} "
+                    f"move={gs.can_move!s:<5} touch={gs.can_touch_ball!s:<5} "
                     f"score={gs.our_score}-{gs.their_score} "
                     f"gk={gs.our_goalkeeper} max_bots={gs.our_max_robots} "
                     f"yellow_team={rx.we_are_yellow} flip_x={rx.flip_x}"

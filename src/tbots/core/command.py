@@ -28,9 +28,9 @@ class RobotCommand:
     chip: bool = False          # True = chip kick, False = flat kick
     dribbler: float = 0.0       # 0.0 .. 1.0
 
-    def clamped(self, max_v: float = 3.0, max_w: float = 12.0) -> "RobotCommand":
+    def clamped(self, max_v: float = 3.0, max_w: float = 12.0) -> RobotCommand:
         def clamp(v: float, lo: float, hi: float) -> float:
-            return lo if v < lo else hi if v > hi else v
+            return lo if v < lo else min(v, hi)
 
         return replace(
             self,

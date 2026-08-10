@@ -3,7 +3,7 @@ import math
 import pytest
 
 from tbots.core.command import RobotCommand
-from tbots.core.geometry import DIV_B, dist
+from tbots.core.geometry import DIV_B
 from tbots.core.units import angle_diff, deg_to_rad, wrap_angle
 
 

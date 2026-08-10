@@ -7,8 +7,7 @@ about the referee. That is the network backend's job.
 
 from __future__ import annotations
 
-import math
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import robosim

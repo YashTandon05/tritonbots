@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Protocol, Sequence, runtime_checkable
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from tbots.core.command import RobotCommand
 from tbots.core.geometry import DIV_B, FieldGeometry
@@ -24,12 +25,12 @@ class Scenario:
     seed: int | None = None
 
     @staticmethod
-    def single_robot_at(x: float, y: float, theta: float = 0.0) -> "Scenario":
+    def single_robot_at(x: float, y: float, theta: float = 0.0) -> Scenario:
         return Scenario(ball=(2.0, 0.0, 0.0, 0.0), us=((x, y, theta),), them=())
 
     @staticmethod
     def kickoff(n_us: int = 6, n_them: int = 6,
-                geom: FieldGeometry = DIV_B) -> "Scenario":
+                geom: FieldGeometry = DIV_B) -> Scenario:
         us = tuple((-0.5 - 0.6 * i, (-1) ** i * 0.7 * (i // 2), 0.0)
                    for i in range(n_us))
         them = tuple((0.5 + 0.6 * i, (-1) ** i * 0.7 * (i // 2), 3.14159)

@@ -10,7 +10,7 @@ never for training.
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from tbots.backends.base import Backend, Scenario
 from tbots.core.command import RobotCommand
