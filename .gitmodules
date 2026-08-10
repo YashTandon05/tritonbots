@@ -4,3 +4,12 @@
 [submodule "third_party/rsoccer"]
 	path = third_party/rsoccer
 	url = https://github.com/YashTandon05/rSoccer.git
+[submodule "protos/ssl-game-controller"]
+	path = protos/ssl-game-controller
+	url = https://github.com/RoboCup-SSL/ssl-game-controller.git
+[submodule "protos/ssl-simulation-protocol"]
+	path = protos/ssl-simulation-protocol
+	url = https://github.com/RoboCup-SSL/ssl-simulation-protocol.git
+[submodule "protos/ssl-vision"]
+	path = protos/ssl-vision
+	url = https://github.com/RoboCup-SSL/ssl-vision.git
