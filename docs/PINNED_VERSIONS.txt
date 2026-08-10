@@ -1,0 +1,20 @@
+# Pinned submodule revisions — output of `git submodule status`.
+#
+# NOTE on ssl-game-controller: the describe suffix reads
+# "v2.7.1-774-ge51e1c7", which is NOT the pin. v3.21.0 is a LIGHTWEIGHT
+# tag, and git describe walks only annotated tags, so it reports the
+# nearest annotated ancestor instead. HEAD e51e1c7 is exactly v3.21.0:
+#     git -C protos/ssl-game-controller rev-parse 'v3.21.0^{commit}'
+#     -> e51e1c7ecf17c42a6a1bdb9f27978f43be6dfbfc
+#
+# ssl-simulation-protocol has no tags at all; ssl-vision's only tags are
+# from 2014/2017. Both are therefore pinned by SHA off master, which is
+# what the committed gitlink records.
+#
+# Regenerate with: git submodule status > docs/PINNED_VERSIONS.txt
+
+ e51e1c7ecf17c42a6a1bdb9f27978f43be6dfbfc protos/ssl-game-controller (v2.7.1-774-ge51e1c7)
+ 65ad6148671a2b1ead58be0b625ca0f8d269ced8 protos/ssl-simulation-protocol (heads/master)
+ 5321d7bd995e7cc584d1b1937818e3f5ea2c9fae protos/ssl-vision (heads/master)
+ 39eacb1d396d1cb1ad5455cf68a3af7d0eaf79e9 third_party/rsim (heads/main)
+ b9a0a63f3edca5a1bb85ef77ed9b5845f3df56a3 third_party/rsoccer (heads/main)
