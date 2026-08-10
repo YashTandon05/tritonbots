@@ -335,3 +335,24 @@ Notes:        *** FINDING — not all league protos can be generated together **
               — stubs are never executed, `_pb` is gitignored, and the
               Makefile's lint target only runs mypy over `src/tbots/core`.
               Would matter only if a type-checker is ever pointed at `_pb`.
+
+## Step 8 — The core contracts            [PASS]
+Verification: the Step 8 python heredoc (imports WorldState/RobotCommand/DIV_B/
+              wrap_angle) ->
+                their goal: (4.5, 0.0)
+                dist to ball: 1.0
+                wrap(3pi): 3.141593
+                clamped: RobotCommand(robot_id=0, vx=3.0, vy=0.0, vtheta=0.0,
+                         kick_speed=0.0, chip=False, dribbler=0.0)
+                core ok
+Deviations:   None. Five files transcribed verbatim from SETUP.md 8.1-8.5:
+              core/units.py, core/geometry.py, core/gamestate.py,
+              core/state.py, core/command.py.
+Notes:        Rule 1 holds — nothing in core/ imports outside core/. The only
+              intra-package imports are state.py -> core.gamestate and
+              command.py -> core.geometry.
+              SETUP.md 8.2 carries a standing caveat worth repeating: the DIV_A
+              / DIV_B constants are 2025-rulebook values and should be checked
+              against the current rulebook before the first match; at runtime
+              prefer the geometry from the SSL-Vision SSL_GeometryData packet
+              and treat these as fallback.
