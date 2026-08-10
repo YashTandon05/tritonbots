@@ -397,3 +397,51 @@ Notes:        Constants in backends/rsim.py were cross-checked against
               human decision: either pin `[tool.ruff.lint] select` in
               pyproject.toml, or apply `ruff format`/`--fix` once across the
               tree after transcription is complete.
+
+## Step 10 — The network layer            [PASS]
+Verification: SETUP.md Step 10 specifies no verification command, only the
+              commit. Three checks run instead:
+              1. All nine new/affected modules import cleanly, including
+                 backends/network.py (the stubs raise on construction, not on
+                 import).
+              2. Live loopback round trip through the real multicast socket:
+                 VisionPublisher -> 224.5.23.2:10006 -> rx_socket/drain ->
+                 SSL_WrapperPacket.ParseFromString. 2 datagrams received;
+                 geometry decoded as 9000 x 6000 mm; ball (1.5, -0.25) m read
+                 back as 1500.0, -250.0 mm; us -> robots_blue, them ->
+                 robots_yellow with ids preserved. Confirms the m->mm
+                 conversion, the bare-protobuf framing, and TTL 0.
+              3. The Step 10.2 field-name check SETUP.md explicitly asks for:
+                 built a Referee message and ran it through to_gamestate().
+                 max_allowed_bots, current_action_time_remaining,
+                 stage_time_left, blue_team_on_positive_half, goalkeeper,
+                 designated_position and command_counter all exist and decode.
+                 DIRECT_FREE_BLUE as blue -> Play.FREE_KICK ours=True,
+                 microseconds -> seconds (5.0 / 300.0), and flip_x negated the
+                 placement target to (-1.0, 0.5).
+Deviations:   net/multicast.py, net/referee.py and net/vision_publisher.py
+              transcribed verbatim from SETUP.md 10.1-10.3.
+              perception/tracker.py transcribed verbatim from 10.5.
+              The four files in 10.4 (vision, robot_control, sim_control,
+              team_client) are given in PROSE, not as code blocks — SETUP.md
+              says only "create these four with the given signatures and
+              NotImplementedError bodies". I therefore wrote the signatures
+              rather than transcribed them, and derived each one from what
+              backends/network.py actually calls, so the stubs and their only
+              caller agree:
+                VisionReceiver.wait_for_next_frame(timeout) / .close()
+                RobotControlSender.send(commands) / .close()
+                SimControlSender.place(scenario, flip_state) / .close()
+              plus the extras the prose names (vision frames(), control
+              feedback() for RobotControlResponse, and the team-client
+              goalkeeper / substitution / advantage methods). Docstrings carry
+              the prose contract verbatim, including "merge, then tick once"
+              and "one packet per tick, containing every robot". Bodies are
+              `raise NotImplementedError("TASK-0xx")` — nothing implemented.
+Notes:        net/sim_control.py is stubbed AND blocked: SimulatorCommand is
+              not generated at all (Step 7's proto collision), so TASK-015
+              cannot be started until that is resolved. The docstring says so
+              and points at the Step 7 log entry.
+              net/team_client.py notes the framing difference that catches
+              people out — TCP 10008 is a length-delimited stream, not the
+              bare protobuf datagrams every other interface uses.
