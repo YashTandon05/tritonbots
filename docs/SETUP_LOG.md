@@ -140,3 +140,70 @@ Notes:        Pin removed BEFORE installing, per CLAUDE.md §5. Confirmed no
               poetry backend ignores setup.py entirely — but it would bite
               if anyone ever switches rSoccer's backend to setuptools.
               Committed to our fork (b9a0a63); submodule pointer bumped here.
+
+## Step 6 — Verify rSim's undocumented behaviour   [PASS]
+Verification: `python scripts/verify_rsim.py` -> exit 0, four facts
+              established; `docs/RSIM_FACTS.md` written with the answers in
+              plain English at the top and zero remaining placeholders.
+              THE FOUR FACTS:
+                Division B field_type = 1   (NOT 0)
+                BALL_STRIDE = 5, ROBOT_STRIDE = 11  (len 137 for 6v6)
+                action vector length = 8
+                angles: DEGREES out (poses, heading, vdir),
+                        RADIANS/sec in (commanded vangular)
+Deviations:   Rewrote scripts/verify_rsim.py rather than transcribing it.
+              CLAUDE.md §6 sanctions this ("a probe to iterate on"); as
+              printed it could not produce correct answers:
+              1. It hardcoded `field_type=0` in PARTS 2 and 3 after PART 1
+                 was supposed to establish the value. field_type=0 is
+                 Division A here, so those parts measured the wrong field.
+                 The rewrite discovers the value and feeds it forward.
+              2. It hardcoded `ACT_LEN = 6` with a comment to adjust by hand.
+              3. Its action-length test assumed a too-short action vector
+                 raises. It does not — see the finding below. As written the
+                 probe reports "action length 6 -> ACCEPTED" and is wrong.
+              4. Added PART 5 (velocity semantics) and a source cross-check
+                 throughout: where a fact is written literally into the C++,
+                 the script quotes it and then confirms it at runtime.
+              Also probed each field_type in a separate subprocess first, so
+              an invalid one could not take the whole run down with it.
+Notes:        *** THREE FINDINGS THAT INVALIDATE VALUES ALREADY IN SETUP.md ***
+              These are reported, not fixed — Steps 9 and 14 are out of scope
+              for this session. They must be corrected when those steps land.
+
+              (a) `field_type` must be 1, not 0. SETUP.md Step 9.2 ships
+                  `FIELD_TYPE_DIV_B: int = 0` and Step 14.3's
+                  configs/env/div_b_6v6.yaml ships `field_type: 0`. Both give
+                  a 12x9 m Division A pitch. Nothing raises — we would just
+                  silently train Division B policies on the wrong field.
+
+              (b) `ACTION_LEN` must be 8, not 6, and SETUP.md's collapsed
+                  offsets `A_KICK_FLAT, A_KICK_CHIP, A_DRIBBLER = 4, 5, 5`
+                  are wrong. Real layout: [0] use-wheels flag, [1][2][3]
+                  local vx/vy/vangular, [4] wheel3, [5] flat kick, [6] chip
+                  kick, [7] dribbler. Critically, a wrong length does NOT
+                  raise: setActions() uses std::vector::operator[], which is
+                  unchecked, so a 6-element action reads two elements past
+                  the end and feeds garbage to the kicker and dribbler.
+                  SETUP.md's `if ACTION_LEN >= 8 ... else` branch takes the
+                  wrong branch and fires the kicker on out-of-bounds memory.
+
+              (c) Angle units are ASYMMETRIC, which SETUP.md's single
+                  `ANGLES_IN_DEGREES` boolean cannot express. Out of the sim
+                  (heading, vdir, and reset/ctor poses) is degrees; INTO the
+                  sim, the commanded angular velocity in action slot [3] is
+                  radians/second. SETUP.md's rsim.py happens to get this
+                  right by accident (it converts state deg->rad and passes
+                  c.vtheta through unconverted), but the single flag implies
+                  both directions share a unit, and they do not.
+
+              Two further behaviours worth knowing, documented in RSIM_FACTS:
+              - get_state() must be called EXACTLY ONCE per step(). Velocities
+                are finite-differenced against the previous get_state() call
+                and always divided by one timeStep regardless of elapsed time.
+                Call it once per 10 steps and a robot moving 1.0 m/s reports
+                vx = 9.9979. Two calls back to back report 0.0.
+              - A heading of exactly 0 is reported as 360.0; getDir()'s range
+                is (0, 360], not [0, 360).
+              Verified against rSim fork commit 69f0d8e on Python 3.11.15,
+              linked to /usr/local/lib/libode.so.8.
