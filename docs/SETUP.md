@@ -672,6 +672,20 @@ cd ../..
 
 This compiles the C++ extension against the ODE you built in Step 1.4. It will take 1–3 minutes.
 
+> **Why `-e .` works here.** Our fork's build backend is `scikit-build-core`
+> (`pyproject.toml`), which supports editable installs natively: `.py` edits
+> under `src/robosim/` take effect on the next import with no reinstall,
+> while the compiled `_robosim` extension is built once at install time and
+> needs a re-`install` after any C++ change. Upstream's original pairing of
+> `setup.py` (`skbuild.setup(...)`) with a `setuptools.build_meta` backend
+> in `pyproject.toml` cannot support this: under PEP 660 the setuptools
+> backend handles `build_editable` itself and never invokes classic
+> scikit-build's cmake step, so `-e .` exits 0 having silently built a
+> package with no extension module at all: `import robosim` itself then
+> fails with `ModuleNotFoundError: No module named 'robosim._robosim'`,
+> because `robosim/__init__.py` does `from ._robosim import VSS, SSL` at
+> import time. Do not reintroduce that pairing.
+
 **Verify:**
 
 ```bash

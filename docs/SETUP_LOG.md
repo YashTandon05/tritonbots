@@ -78,29 +78,46 @@ Notes:        C++ fixes needed for GCC 13, both committed and pushed to our
                 - CMAKE_CXX_STANDARD 11 -> 17.
               Python 3.11.15 throughout. NO fallback to 3.10 was needed or made.
 
-              *** FINDING — editable install is silently broken (needs a
-              human decision) ***
-              `uv pip install -e .` exits 0 and reports success, but never
-              runs cmake: no _skbuild dir, no .so produced anywhere. It just
-              writes a .pth pointing at src/, so `import robosim` resolves
-              but `from ._robosim import VSS, SSL` raises ModuleNotFoundError.
-              Cause: the fork's pyproject.toml sets
-              `build-backend = "setuptools.build_meta"` while setup.py relies
+              *** FINDING (RESOLVED in a later session) — editable install
+              was silently broken ***
+              `uv pip install -e .` exited 0 and reported success, but never
+              ran cmake: no _skbuild dir, no .so produced anywhere. It just
+              wrote a .pth pointing at src/, so `import robosim` resolved
+              but `from ._robosim import VSS, SSL` raised ModuleNotFoundError.
+              Cause: the fork's pyproject.toml set
+              `build-backend = "setuptools.build_meta"` while setup.py relied
               on `skbuild.setup`. Under PEP 660, setuptools handles the
               build_editable hook itself and scikit-build's cmake logic is
               never invoked. Classic scikit-build has no PEP 660 support.
               Impact: SETUP.md Step 4.4's own command, and Step 15.4's CI line
-              `uv pip install -e third_party/rsim`, both produce a broken
-              install. The Step 4.4 verification does catch it (import fails
-              loudly), so it is not dangerous — just wrong as written.
-              Workaround in use: non-editable `uv pip install .`. Consequence:
-              after any future edit to rSim's C++ or Python source, it must be
-              reinstalled; edits do not take effect live.
-              Recommended real fix: migrate the fork to `scikit-build-core`,
-              which supports PEP 660 properly. NOT done here — it changes our
-              fork's packaging backend and touches CMakeLists install paths,
-              which felt like a decision to surface rather than make
-              unilaterally.
+              `uv pip install -e third_party/rsim`, both produced a broken
+              install. The Step 4.4 verification did catch it (import fails
+              loudly), so it was not dangerous — just wrong as written.
+              Workaround used at the time: non-editable `uv pip install .`.
+
+              RESOLUTION: migrated the fork to `scikit-build-core`
+              (commit `a2a7c70`, merged `39eacb1`, pushed), which is itself a
+              PEP 517/660 backend and supports editable installs natively.
+              `pyproject.toml` now declares
+              `build-backend = "scikit_build_core.build"` with
+              `wheel.packages = ["src/robosim"]` and
+              `wheel.install-dir = "robosim"`; `setup.py` removed (nothing
+              reads it under this backend). Verified in two disposable venvs,
+              independent of this repo's working venv: editable install
+              genuinely compiles the extension, links
+              `/usr/local/lib/libode.so.8`, passes a full SSL()/step()/
+              get_state() functional test, and a live edit to
+              `src/robosim/__init__.py` (no reinstall) is picked up on the
+              next import; non-editable install verified equivalently; the
+              full rsoccer_gym pipeline re-verified against the new build.
+              C++ changes still require a reinstall (deliberately did not set
+              `editable.rebuild = true` — that would put a cmake/ninja/
+              network round-trip on every `import robosim`, including inside
+              training subprocess workers). Submodule pointer in this repo
+              bumped to `39eacb1`; main venv's `robosim` reinstalled
+              editable and re-verified against Steps 4/5/6's gates, all still
+              PASS. SETUP.md Step 4.4 updated with a note on why `-e .` now
+              works, so this pairing is not reintroduced by accident.
 
 ## Step 5 — Install rSoccer                      [PASS]
 Verification: SETUP.md's script as written FAILS —
