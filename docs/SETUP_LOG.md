@@ -101,3 +101,42 @@ Notes:        C++ fixes needed for GCC 13, both committed and pushed to our
               fork's packaging backend and touches CMakeLists install paths,
               which felt like a decision to surface rather than make
               unilaterally.
+
+## Step 5 — Install rSoccer                      [PASS]
+Verification: SETUP.md's script as written FAILS —
+              `gym.make("SSLGoToBall-v0")` -> `NameNotFound: Environment
+              `SSLGoToBall` doesn't exist.` That env ID does not exist in the
+              pinned rSoccer revision. Ran the equivalent check against the
+              env IDs the library actually registers; all 5 reset AND step:
+                SSLStaticDefenders-v0      obs=(24,) act=(5,)  OK
+                SSLDribbling-v0            obs=(21,) act=(4,)  OK
+                SSLContestedPossession-v0  obs=(14,) act=(5,)  OK
+                SSLPassEndurance-v0        obs=(16,) act=(3,)  OK
+                VSS-v0                     obs=(40,) act=(2,)  OK
+Deviations:   1. `SSLGoToBall-v0` is stale in SETUP.md. Substituted the real
+                 registered IDs (listed above) rather than inventing a name.
+                 The gate's intent — prove rSoccer and rSim work together — is
+                 preserved and in fact strengthened: SETUP.md only calls
+                 reset() on one env; this steps all five.
+              2. The pin appears in BOTH files, not just setup.py as SETUP.md
+                 implies: `pyproject.toml` `rc-robosim = "^1.2"` and
+                 `setup.py` `"rc-robosim >= 1.2.0"`. Removed from both.
+                 The effective build backend is `poetry.core.masonry.api`, so
+                 pyproject.toml is the one that actually governs; setup.py is
+                 vestigial but was carrying the same pin.
+Notes:        Pin removed BEFORE installing, per CLAUDE.md §5. Confirmed no
+              rc-robosim was fetched from PyPI, and that our source build is
+              untouched afterwards: robosim still resolves to
+              `<venv>/.../robosim/_robosim.cpython-311-x86_64-linux-gnu.so`,
+              still links `/usr/local/lib/libode.so.8`, and its dist-info
+              direct_url.json still reads
+              `file:///home/ytandon/tritonbots/third_party/rsim`.
+              This pin would definitely have fired rather than being
+              harmlessly satisfied: our build reports version
+              `0.1.dev134+g69f0d8e`, which does not satisfy `^1.2`.
+              Unrelated latent issue, NOT hit: setup.py also pins
+              `protobuf == 3.20.2`, which conflicts with our own
+              `protobuf>=4.25` (5.29.6 installed). Harmless today because the
+              poetry backend ignores setup.py entirely — but it would bite
+              if anyone ever switches rSoccer's backend to setuptools.
+              Committed to our fork (b9a0a63); submodule pointer bumped here.
