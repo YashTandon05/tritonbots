@@ -1,0 +1,29 @@
+# Generated protobuf code — never commit, always regenerate
+src/tbots/_pb/
+
+# Downloaded binaries
+tools/bin/*
+!tools/bin/.gitkeep
+
+# Game controller runtime state
+tools/gc-data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Training artifacts
+runs/
+checkpoints/
+wandb/
+*.pt
+*.onnx
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
