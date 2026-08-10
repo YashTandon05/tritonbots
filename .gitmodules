@@ -1,0 +1,6 @@
+[submodule "third_party/rsim"]
+	path = third_party/rsim
+	url = https://github.com/YashTandon05/rSim.git
+[submodule "third_party/rsoccer"]
+	path = third_party/rsoccer
+	url = https://github.com/YashTandon05/rSoccer.git
