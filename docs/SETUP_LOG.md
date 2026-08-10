@@ -224,3 +224,114 @@ Notes:        *** THREE FINDINGS THAT INVALIDATE VALUES ALREADY IN SETUP.md ***
                 is (0, 360], not [0, 360).
               Verified against rSim fork commit 69f0d8e on Python 3.11.15,
               linked to /usr/local/lib/libode.so.8.
+
+## Step 7 — Protobuf submodules and code generation   [PASS]
+Verification: SETUP.md's script as written FAILS at the first line —
+              `from tbots._pb.ssl_gc_referee_message_pb2 import Referee`
+              -> `ModuleNotFoundError`. The module is at
+              `tbots._pb.state.ssl_gc_referee_message_pb2` (see Deviation 2).
+              With the path corrected:
+                Referee stages:   NORMAL_FIRST_HALF_PRE, NORMAL_FIRST_HALF,
+                                  NORMAL_HALF_TIME, NORMAL_SECOND_HALF_PRE,
+                                  NORMAL_SECOND_HALF ...
+                Referee commands: all 18 present, exactly the list SETUP.md
+                                  predicts (HALT ... BALL_PLACEMENT_BLUE)
+                proto ok
+              Also confirmed all 23 generated modules import together in one
+              process (0 failures), and that `make proto` regenerates
+              idempotently.
+Deviations:   1. Proto paths all exist as SETUP.md expects. CLAUDE.md §6 warned
+                 `protos/ssl-vision/src/shared/proto` might differ in the
+                 pinned revision — it does not. Checked all three before
+                 running: GC 20 protos, sim 11, ssl-vision 7 (38 total).
+              2. GC modules are NESTED, not flat. The game controller's protos
+                 import each other subdirectory-qualified
+                 (`import "state/ssl_gc_common.proto";`), so the include root
+                 must be `protos/ssl-game-controller/proto` and the generated
+                 tree mirrors upstream: `_pb/state/`, `_pb/rcon/`, `_pb/geom/`,
+                 `_pb/tracker/`, etc. Flattening would break those imports, so
+                 this is not fixable — the import path is what changes.
+                 Corrected in SETUP.md: Step 7's verification, Step 10.2's
+                 `net/referee.py`, and Step 16's acceptance check 1 all used
+                 the flat path and would all have failed.
+                 The sim-protocol and ssl-vision protos import by bare
+                 filename, so those land flat as SETUP.md assumed.
+              3. gen_proto.sh substantially rewritten — it could not work as
+                 printed. Two independent reasons, see Notes.
+              4. GC's `v3.21.0` is a LIGHTWEIGHT tag, so `git submodule
+                 status` / `git describe` report the misleading
+                 `v2.7.1-774-ge51e1c7`. Confirmed HEAD e51e1c7 == v3.21.0^{commit}
+                 exactly. Added a header to docs/PINNED_VERSIONS.txt so nobody
+                 misreads the pin as v2.7.1.
+              5. Tag availability differs from SETUP.md's framing ("Pin them to
+                 a tag. Never track master"): ssl-simulation-protocol has NO
+                 tags at all and ssl-vision's only tags are from 2014/2017.
+                 Both are pinned by SHA off master, which is what the committed
+                 gitlink records — SETUP.md's own inline comments already
+                 anticipate this. Only the GC could be pinned to a real tag.
+                 Kept v3.21.0 rather than the now-current v3.23.0, so the
+                 protos match the GC binary/image version Step 13 and
+                 docker-compose.yml pin. Bump all three together, deliberately.
+Notes:        *** FINDING — not all league protos can be generated together ***
+              None of these .proto files declare a `package`, so every message
+              lands in the GLOBAL protobuf namespace, and all three repos
+              vendor their own private copy of the SSL vision protos. Across
+              the three submodules 26 top-level symbols are multiply defined:
+              Team, Division, RobotId, SSL_DetectionFrame/Ball/Robot,
+              SSL_GeometryData, SSL_FieldShapeType, SSL_WrapperPacket,
+              TrackedFrame, TrackerWrapperPacket, Vector2, Vector3, ...
+              protobuf's descriptor pool is process-global and keyed by symbol
+              (impl here is `upb`), so the second definition raises at IMPORT
+              time: `TypeError: Couldn't build proto file into descriptor
+              pool: duplicate symbol 'Team'`.
+              Measured: generating all 38 protos yields a package where 13 of
+              38 modules cannot be imported, and which 13 depends on import
+              ORDER. That is the failure SETUP.md's script would have shipped.
+              Additionally, protoc cannot be given all three include roots at
+              once (as SETUP.md does): the GC protos import deps
+              subdirectory-qualified while the sim protos import the same
+              names bare, so a shared -I list makes protoc resolve one
+              physical file under two canonical names and collide with itself.
+              That is the error the original script actually died on.
+
+              RESOLUTION: each repo is compiled against only its own include
+              root, and we generate a curated conflict-free subset — 23 of the
+              38 protos — choosing the authoritative repo per SETUP.md 7.1's
+              own ownership note and dropping the vendored duplicates. The
+              selection was computed by taking the dependency closure of the
+              protos we actually need, then greedily adding every other proto
+              that introduces no symbol collision. Exclusions and rationale
+              are in gen_proto.sh's header comment.
+              Verified: all 23 import together, 0 failures.
+
+              TWO CAPABILITIES THIS COSTS, both blocked rather than merely
+              omitted — they cannot be recovered by regenerating:
+              - `SimulatorCommand` is unavailable. sim-protocol's
+                ssl_simulation_control.proto imports its VENDORED
+                ssl_gc_common.proto, whose Team/Division/RobotId collide with
+                the GC's own state/ssl_gc_common.proto that Referee needs.
+                Referee and SimulatorCommand genuinely cannot coexist in one
+                process as these repos are published. Blocks TASK-015
+                (net/sim_control.py). Not on the match path — it is only used
+                to teleport for episode resets against a simulator, and
+                SETUP.md 14.2 already says that port is locked down at
+                tournaments.
+              - The GC `ci/` protos are unavailable (they pull the same
+                vendored vision copies), blocking TASK-017's ci-mode client.
+              Everything the match path needs IS present and coexists:
+              Referee, RobotControl, RobotControlResponse, SSL_WrapperPacket,
+              TrackerWrapperPacket, and the rcon team-client protos.
+
+              Confirmed this is the modern GC proto, not archived refbox:
+              TeamInfo has `goalkeeper` and no `goalie`. All fields Step 10.2
+              depends on exist — command_counter, designated_position,
+              blue_team_on_positive_half, current_action_time_remaining,
+              stage_time_left, max_allowed_bots, yellow_cards, red_cards.
+
+              Minor: protoletariat rewrites the generated `.py` imports
+              correctly (verified: `from ..state import ...`, `from . import
+              ...`, no un-rewritten top-level pb2 imports remain) but does NOT
+              rewrite the `.pyi` type stubs, which keep flat imports. Harmless
+              — stubs are never executed, `_pb` is gitignored, and the
+              Makefile's lint target only runs mypy over `src/tbots/core`.
+              Would matter only if a type-checker is ever pointed at `_pb`.

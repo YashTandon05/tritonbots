@@ -1133,11 +1133,43 @@ chmod +x scripts/gen_proto.sh
 
 > **The gotcha this script exists to solve.** These `.proto` files import each other by bare filename (`import "ssl_gc_common.proto";`). Python's `protoc` turns that into a *top-level* import: `import ssl_gc_common_pb2`. The moment the generated files live inside a package, that import fails with `ModuleNotFoundError: No module named 'ssl_gc_common_pb2'`. [`protoletariat`](https://pypi.org/project/protoletariat/) (the `protol` command) rewrites them into relative imports. Every team hits this on day one; now you won't.
 
+> **The second gotcha: you cannot generate all of them.** None of the league's
+> protos declare a `package`, so every message lands in the global protobuf
+> namespace — and all three repos vendor their own private copy of the SSL
+> vision protos. Across the three submodules, 26 top-level symbols are defined
+> more than once (`Team`, `RobotId`, `SSL_DetectionFrame`, `SSL_GeometryData`,
+> `SSL_WrapperPacket`, `TrackedFrame`, `Vector2`, …). protobuf's descriptor
+> pool is process-global and keyed by symbol, so the second definition raises
+> `TypeError: Couldn't build proto file into descriptor pool: duplicate symbol
+> 'Team'` at *import* time. Generating all 38 protos yields a package in which
+> 13 modules cannot be imported, and which 13 depends on import order.
+>
+> The script therefore generates a curated, conflict-free subset (23 protos),
+> picking the authoritative repo for each file per the ownership note in 7.1
+> and dropping the vendored duplicates. The exclusions are listed with their
+> rationale in the script's header comment. Two consequences worth knowing
+> before you reach Step 10:
+>
+> - **`SimulatorCommand` is not generated.** `ssl_simulation_control.proto`
+>   imports simulation-protocol's *vendored* `ssl_gc_common.proto`, whose
+>   `Team`/`Division`/`RobotId` collide with the game controller's own
+>   `state/ssl_gc_common.proto` that `Referee` depends on. The referee and the
+>   simulator-control protos genuinely cannot coexist in one process as these
+>   repos are published. `net/sim_control.py` (TASK-015) is blocked on
+>   resolving that — it is only needed for episode resets against a simulator,
+>   never on the match path.
+> - **The GC `ci/` protos are not generated** either (they pull in the same
+>   vendored vision copies), so TASK-017's ci-mode client is likewise blocked.
+>
+> Everything the match path actually needs — `Referee`, `RobotControl`,
+> `RobotControlResponse`, `SSL_WrapperPacket`, `TrackerWrapperPacket`, and the
+> `rcon` team-client protos — is present and imports cleanly together.
+
 **Verify:**
 
 ```bash
 python - << 'PYEOF'
-from tbots._pb.ssl_gc_referee_message_pb2 import Referee
+from tbots._pb.state.ssl_gc_referee_message_pb2 import Referee
 from tbots._pb.ssl_simulation_robot_control_pb2 import RobotControl
 from tbots._pb.messages_robocup_ssl_wrapper_pb2 import SSL_WrapperPacket
 
@@ -1147,6 +1179,16 @@ print("Referee commands:", [f.name for f in Referee.Command.DESCRIPTOR.values])
 print("proto ok")
 PYEOF
 ```
+
+> **Note the `state.` in that first import.** The game controller's protos import
+> each other subdirectory-qualified (`import "state/ssl_gc_common.proto";`), so
+> the include root has to be `protos/ssl-game-controller/proto` and the
+> generated package mirrors the upstream layout:
+> `tbots._pb.state.ssl_gc_referee_message_pb2`, `tbots._pb.rcon.…`,
+> `tbots._pb.tracker.…`. Flattening is not an option — it would break those
+> imports. The simulation-protocol and ssl-vision protos import their deps by
+> bare filename, so those two land flat, as above. Anywhere else in this guide
+> that imports a `ssl_gc_*` module needs the same subdirectory prefix.
 
 You should see the full `Command` enum: `HALT`, `STOP`, `NORMAL_START`, `FORCE_START`, `PREPARE_KICKOFF_YELLOW/BLUE`, `PREPARE_PENALTY_YELLOW/BLUE`, `DIRECT_FREE_YELLOW/BLUE`, `INDIRECT_FREE_YELLOW/BLUE`, `TIMEOUT_YELLOW/BLUE`, `GOAL_YELLOW/BLUE`, `BALL_PLACEMENT_YELLOW/BLUE`.
 
@@ -2048,7 +2090,7 @@ from __future__ import annotations
 
 import socket
 
-from tbots._pb.ssl_gc_referee_message_pb2 import Referee
+from tbots._pb.state.ssl_gc_referee_message_pb2 import Referee
 from tbots.core.gamestate import HALT, GameState, Play
 from tbots.core.units import mm_to_m
 from tbots.net.multicast import drain, rx_socket
@@ -3547,7 +3589,7 @@ Open several terminals. In every one: `cd ~/code/tritonbots && source .venv/bin/
 
 ```bash
 make proto
-python -c "from tbots._pb.ssl_gc_referee_message_pb2 import Referee; print('ok')"
+python -c "from tbots._pb.state.ssl_gc_referee_message_pb2 import Referee; print('ok')"
 ```
 *Proves:* submodules are checked out, codegen works, import rewriting worked.
 
