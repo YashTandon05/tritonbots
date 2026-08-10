@@ -522,3 +522,42 @@ Notes:        THE STEPS/S NUMBER: 474 steps/s, 6v6, WSL2, with vision
               1v1 measured 498 steps/s. Treat 474 as representative of normal
               play and expect it to sag in crowded scrimmages. Benchmark
               properly under TASK-055 before making a scaling decision on it.
+
+## Step 15 — Tests and CI            [PASS]
+Verification: `pytest -q` -> 10 passed, 1 skipped in 0.31s
+              The one skip is test_backend_parity::test_network_converges
+              ("requires a running simulator; set TBOTS_NETWORK_TESTS=1"),
+              which is the correct state per SETUP.md 15.3.
+              Breakdown: 5 core, 4 rSim backend, 1 rSim parity passing.
+              test_rsim_converges reaches the target inside its 600-step
+              budget in 0.04s, so GoToPoint genuinely converges in rSim — the
+              acceptance test for the whole architecture, minus the network
+              half that TASK-014 unblocks.
+Deviations:   tests/test_core.py, tests/test_rsim_backend.py,
+              tests/test_backend_parity.py and .github/workflows/ci.yml
+              transcribed verbatim from SETUP.md 15.1-15.4.
+Notes:        Two things about these tests a reader should not mistake for
+              coverage, both faithful to the spec rather than my choices:
+              - test_state_length_matches_constants asserts nothing. It passes
+                by NOT raising: RSimBackend.reset() carries the state-length
+                guard, so the test is really "the guard did not fire". Fine,
+                but it will not catch a stride error that happens to preserve
+                total length.
+              - test_core.py imports `dist` and never uses it (ruff F401).
+                Transcribed as written; not "fixed".
+
+              CI CAVEAT — .github/workflows/ci.yml runs `make lint` before
+              `make test`, and `make lint` currently FAILS (see the Step 9
+              entry: ~10 cosmetic ruff findings across faithfully-transcribed
+              core/ and backends/ code, plus the F401 above, under ruff
+              0.16.2's default rule set). So the first push will show a red CI
+              on the lint step even though every test passes. This needs a
+              human decision before it is papered over: pin
+              `[tool.ruff.lint] select` in pyproject.toml so the rule set stops
+              drifting with the ruff version, or run `ruff check --fix` once
+              across the tree now that transcription is done. I did neither —
+              both are edits to SETUP.md-sourced code, which CLAUDE.md §8
+              forbids me from making unilaterally.
+
+              `make test` depends on `make proto`, so CI regenerates the
+              protobufs before running; _pb is gitignored, as intended.
