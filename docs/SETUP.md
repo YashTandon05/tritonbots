@@ -740,14 +740,14 @@ If this prints shapes and "rsoccer ok", both libraries are working.
 
 ## Step 6 — Verify rSim's undocumented behaviour
 
-**Do not skip this step.** rSim's documentation contradicts itself in two places, and both contradictions will silently corrupt your training if you guess wrong.
+**Do not skip this step.** rSim's documentation contradicts itself in two places, and both contradictions will silently corrupt your training if you guess wrong. Empirical probing also surfaces two more undocumented behaviours that are just as dangerous and that no README mentions at all: a wrong action vector length does not raise an exception, and rSim's reported velocities are only correct if `get_state()` is called exactly once per `step()`.
 
-The two conflicts:
+The two documented conflicts:
 
 1. **Field type.** The rSim README's SSL section says `0 = Division A, 1 = Division B, 2 = Hardware Challenges`. rSoccer's SSL README says `0 = the 6v6 competition field, 1 = 11v11, 2 = the 2021 hardware challenge field`. These are opposite claims about what `0` means.
 2. **Action vector length.** The rSim README's comment describes 8 fields per robot, but the code example in the same README constructs 6.
 
-We resolve both empirically, right now, and write the answer down.
+We resolve all of this empirically, right now, and write the answers down.
 
 Create `scripts/verify_rsim.py`:
 
@@ -755,94 +755,249 @@ Create `scripts/verify_rsim.py`:
 """Empirically determine rSim's field-type mapping and array strides.
 
 Run this ONCE after building rSim, and again after any rSim fork update.
-Paste the output into docs/RSIM_FACTS.md.
+The four answers it establishes go at the top of docs/RSIM_FACTS.md, and
+must exactly match FIELD_TYPE_DIV_B, ACTION_LEN, and the action-offset
+constants in backends/rsim.py (Step 9.2), and field_type in
+configs/env/div_b_6v6.yaml (Step 14.3).
+
+NOTE ON PROVENANCE. Where a fact can be read directly out of the rSim C++
+source, this script quotes that source and then confirms it at runtime.
+Black-box probing alone is not trustworthy here -- see PART 3, where the
+obvious probe gives a confidently wrong answer: a too-short action vector
+does NOT raise, it silently reads past the end of an unchecked
+std::vector, so "no exception" does not mean "correct length".
 """
 
 import numpy as np
 import robosim
 
 N_BLUE, N_YELLOW = 6, 6
+N_ROBOTS = N_BLUE + N_YELLOW
 TIME_STEP_MS = 16  # ~60 Hz
+DT = TIME_STEP_MS / 1000.0
+
+
+def make(field_type):
+    """Construct an SSL world. Positional args only; the pybind11 signature is
+    SSL(fieldType, nRobotsBlue, nRobotsYellow, timeStep_ms,
+        ballPos, blueRobotsPos, yellowRobotsPos)."""
+    return robosim.SSL(
+        field_type, N_BLUE, N_YELLOW, TIME_STEP_MS,
+        [0.0, 0.0, 0.0, 0.0],
+        [[-0.5 - 0.2 * i, 0.0, 0.0] for i in range(N_BLUE)],
+        [[0.5 + 0.2 * i, 0.0, 180.0] for i in range(N_YELLOW)],
+    )
+
 
 print("=" * 70)
-print("PART 1 — field type mapping")
+print("PART 1 - field type mapping")
 print("=" * 70)
+print("Division B is 9.0 x 6.0 m. Division A is 12.0 x 9.0 m.")
+print()
+
+div_b_field_type = None
 for ft in (0, 1, 2):
     try:
-        sim = robosim.SSL(
-            ft, N_BLUE, N_YELLOW, TIME_STEP_MS,
-            [0.0, 0.0, 0.0, 0.0],
-            [[-0.5 - 0.2 * i, 0.0, 0.0] for i in range(N_BLUE)],
-            [[0.5 + 0.2 * i, 0.0, 180.0] for i in range(N_YELLOW)],
-        )
-        p = sim.get_field_params()
-        print(f"\nfield_type={ft}")
-        for k in sorted(p):
-            print(f"    {k:<24} {p[k]}")
+        p = make(ft).get_field_params()
+        tag = ""
+        if (p["length"], p["width"]) == (9.0, 6.0):
+            div_b_field_type = ft
+            tag = "   <-- DIVISION B, this is OUR value"
+        elif (p["length"], p["width"]) == (12.0, 9.0):
+            tag = "   <-- Division A"
+        print(f"field_type={ft}  length={p['length']}  width={p['width']}  "
+              f"goal_width={p['goal_width']}  "
+              f"penalty {p['penalty_length']}x{p['penalty_width']}{tag}")
     except Exception as exc:
-        print(f"\nfield_type={ft} -> FAILED: {exc}")
+        print(f"field_type={ft} -> FAILED: {exc}")
+
+if div_b_field_type is None:
+    raise SystemExit("FATAL: no field_type reported a 9.0 x 6.0 field.")
 
 print()
-print("Division B is 9.0 x 6.0 m. Division A is 12.0 x 9.0 m.")
-print("Whichever field_type reports length=9.0, width=6.0 is OUR value.")
+print(f"ANSWER: Division B is field_type = {div_b_field_type}")
+print("This MUST match FIELD_TYPE_DIV_B in backends/rsim.py (Step 9.2)")
+print("and field_type in configs/env/div_b_6v6.yaml (Step 14.3).")
+
+# Everything below MUST use the field type established above, not a guess.
+FIELD_TYPE = div_b_field_type
 
 print()
 print("=" * 70)
-print("PART 2 — state array stride")
+print("PART 2 - state array stride")
 print("=" * 70)
-sim = robosim.SSL(
-    0, N_BLUE, N_YELLOW, TIME_STEP_MS,
-    [0.0, 0.0, 0.0, 0.0],
-    [[-0.5 - 0.2 * i, 0.0, 0.0] for i in range(N_BLUE)],
-    [[0.5 + 0.2 * i, 0.0, 180.0] for i in range(N_YELLOW)],
-)
+print("Source: SSLWorld::getState() in src/robosim/sslworld.cpp indexes the")
+print("previous state as lastState[5 + (11 * i) + k] -- the strides are")
+print("written literally into the C++. Confirming that against the array:")
+print()
+
+sim = make(FIELD_TYPE)
 state = np.asarray(sim.get_state())
-n_robots = N_BLUE + N_YELLOW
-print(f"len(get_state())          = {len(state)}")
-print(f"n_robots                  = {n_robots}")
+print(f"len(get_state())  = {len(state)}")
+print(f"n_robots          = {N_ROBOTS}")
 for ball_stride in (5, 6, 7):
     rem = len(state) - ball_stride
-    if rem % n_robots == 0:
-        print(f"  if BALL_STRIDE={ball_stride} -> ROBOT_STRIDE={rem // n_robots}")
-print()
-print("Raw state (first 40 values):")
-print(np.round(state[:40], 4))
+    if rem % N_ROBOTS == 0:
+        print(f"  if BALL_STRIDE={ball_stride} -> ROBOT_STRIDE={rem // N_ROBOTS}")
+
+BALL_STRIDE, ROBOT_STRIDE = 5, 11
+assert len(state) == BALL_STRIDE + ROBOT_STRIDE * N_ROBOTS, (
+    f"state length {len(state)} != {BALL_STRIDE} + {ROBOT_STRIDE} * {N_ROBOTS}")
+
 print()
 print("Blue robots were placed at x = -0.5, -0.7, -0.9, ... y = 0, theta = 0.")
-print("Find those x values in the array above to confirm the stride.")
+print("Reading x back at BALL_STRIDE + ROBOT_STRIDE * i:")
+for i in range(N_BLUE):
+    base = BALL_STRIDE + ROBOT_STRIDE * i
+    print(f"  robot {i}: x={state[base]:+.4f}  y={state[base+1]:+.4f}  "
+          f"dir={state[base+2]:8.3f}   (expected x={-0.5 - 0.2*i:+.1f}, y=+0.0)")
+
+print()
+print("ANSWER: BALL_STRIDE = 5, ROBOT_STRIDE = 11")
+print("Ball slice  : [x, y, z, vx, vy]")
+print("Robot slice : [x, y, dir, vx, vy, vdir, is_touching_ball, w0, w1, w2, w3]")
 
 print()
 print("=" * 70)
-print("PART 3 — action vector length and angle units")
+print("PART 3 - action vector length")
 print("=" * 70)
+print("Source: SSLWorld::setActions() in src/robosim/sslworld.cpp reads")
+print("rbtAction[0] through rbtAction[7] -- eight slots:")
+print("  [0]        use-wheels flag; >0 = treat [1..4] as wheel speeds,")
+print("             otherwise [1],[2],[3] are local vx, vy, vangular")
+print("  [1][2][3]  local vx, vy, vangular   (or wheels 0-2 if [0] > 0)")
+print("  [4]        wheel 3                  (only read when [0] > 0)")
+print("  [5]        kick speed, flat")
+print("  [6]        kick speed, chip")
+print("  [7]        dribbler on/off")
+print()
+print("WARNING: the naive 'does a short action vector raise?' probe is")
+print("meaningless here. std::vector::operator[] performs NO bounds check, so")
+print("a 6-element action silently reads garbage for [6] and [7] instead of")
+print("raising. Length is therefore established from the source, not caught")
+print("by an exception. Demonstrating that below:")
+print()
 for n_act in (6, 7, 8):
     try:
-        s2 = robosim.SSL(
-            0, N_BLUE, N_YELLOW, TIME_STEP_MS,
-            [0.0, 0.0, 0.0, 0.0],
-            [[-0.5 - 0.2 * i, 0.0, 0.0] for i in range(N_BLUE)],
-            [[0.5 + 0.2 * i, 0.0, 180.0] for i in range(N_YELLOW)],
-        )
-        s2.step([[0.0] * n_act for _ in range(n_robots)])
-        print(f"action length {n_act} -> ACCEPTED")
+        s = make(FIELD_TYPE)
+        s.step([[0.0] * n_act for _ in range(N_ROBOTS)])
+        note = "" if n_act == 8 else "  <-- NOT actually safe: read out of bounds"
+        print(f"  action length {n_act} -> no exception{note}")
     except Exception as exc:
-        print(f"action length {n_act} -> rejected ({type(exc).__name__})")
+        print(f"  action length {n_act} -> raised {type(exc).__name__}: {exc}")
 
 print()
-print("Angle unit check: spin robot 0 and watch its reported heading.")
-sim.reset([0.0, 0.0, 0.0, 0.0],
-          [[0.0, 0.0, 0.0]] + [[-1.0 - 0.2 * i, 2.0, 0.0] for i in range(N_BLUE - 1)],
-          [[2.0 + 0.2 * i, 2.0, 180.0] for i in range(N_YELLOW)])
-ACT_LEN = 6  # adjust to whatever PART 3 accepted
-for tick in range(40):
-    acts = [[0.0] * ACT_LEN for _ in range(n_robots)]
-    acts[0] = [0.0, 0.0, 0.0, 3.0] + [0.0] * (ACT_LEN - 4)  # vx, vy, vtheta slots
-    sim.step(acts)
-st = np.asarray(sim.get_state())
-print("state[5:16] after spinning robot 0 for 40 ticks:")
-print(np.round(st[5:16], 4))
+print("ANSWER: action vector length = 8 (indices 0..7 are all read)")
+
 print()
-print("If any value grew past ~6.28 it is DEGREES. If it wraps near +/-3.14 it is RADIANS.")
+print("=" * 70)
+print("PART 4 - angle units")
+print("=" * 70)
+print("Source says degrees for reported heading:")
+print("  SSLRobot::getDir()  returns acos(...) * (180.0f / M_PI), mapped via")
+print("                      `(y > 0) ? absAng : 360 - absAng` -> range (0, 360]")
+print("  SSLRobot::setDir()  does `ang *= M_PI / 180.0f` -> reset poses are degrees")
+print("  smallestAngleDiff() compares in degrees -> state vdir is degrees/second")
+print("But the ACTION side is radians:")
+print("  setDesiredSpeedLocal(vx, vy, vw) computes (robotRadius * vw) and adds")
+print("  it to m/s terms, so vw must be rad/s for the units to balance.")
+print()
+
+ACT_LEN = 8
+
+
+def body_action(vx=0.0, vy=0.0, vw=0.0, robot=0):
+    """[0]=0 selects body velocities, so [1],[2],[3] are vx, vy, vangular."""
+    acts = [[0.0] * ACT_LEN for _ in range(N_ROBOTS)]
+    acts[robot] = [0.0, vx, vy, vw] + [0.0] * (ACT_LEN - 4)
+    return acts
+
+
+# -- 4a: place at known headings and read them back. No dynamics involved,
+#        so this isolates the unit question cleanly.
+print("4a. Place robots at known headings, read the reported heading back:")
+known = [0.0, 45.0, 90.0, 135.0, 180.0, 270.0]
+sim = robosim.SSL(
+    FIELD_TYPE, N_BLUE, N_YELLOW, TIME_STEP_MS, [0.0, 0.0, 0.0, 0.0],
+    [[-1.0 - 0.3 * i, 0.0, known[i]] for i in range(N_BLUE)],
+    [[1.0 + 0.3 * i, 0.0, 0.0] for i in range(N_YELLOW)],
+)
+st = np.asarray(sim.get_state())
+for i in range(N_BLUE):
+    got = st[BALL_STRIDE + ROBOT_STRIDE * i + 2]
+    print(f"      placed {known[i]:6.1f} -> reported {got:8.3f}")
+print("    1:1 in degrees. (Note 0.0 comes back as 360.0 -- getDir()'s")
+print("    `(y > 0) ? absAng : 360 - absAng` makes the range (0, 360], not")
+print("    [0, 360). A heading of exactly zero reports as 360.)")
+
+# -- 4b: a spin test settles whether COMMANDED vangular is deg/s or rad/s.
+#        Spin to steady state first; the wheels ramp through a motor model,
+#        so measuring from a standstill under-reads badly.
+print()
+print("4b. Command vangular = 3.0 and measure the achieved rate:")
+sim = robosim.SSL(
+    FIELD_TYPE, N_BLUE, N_YELLOW, TIME_STEP_MS, [0.0, 0.0, 0.0, 0.0],
+    [[-1.0 - 0.3 * i, 0.0, 0.0] for i in range(N_BLUE)],
+    [[1.0 + 0.3 * i, 0.0, 0.0] for i in range(N_YELLOW)],
+)
+VW = 3.0
+for _ in range(120):                       # reach steady state
+    sim.step(body_action(vw=VW))
+h0 = np.asarray(sim.get_state())[BALL_STRIDE + 2]
+TICKS = 30
+for _ in range(TICKS):
+    sim.step(body_action(vw=VW))
+h1 = np.asarray(sim.get_state())[BALL_STRIDE + 2]
+elapsed = TICKS * DT
+rate_deg = ((h1 - h0) % 360.0) / elapsed
+print(f"      heading {h0:.3f} -> {h1:.3f} over {elapsed:.2f}s")
+print(f"      achieved = {rate_deg:.2f} deg/s = {np.radians(rate_deg):.3f} rad/s")
+print(f"      commanded 3.0 -> got {np.radians(rate_deg):.3f} rad/s, not 3 deg/s.")
+print()
+print("ANSWER: state angles and reset poses are DEGREES.")
+print("        Commanded vangular is RADIANS/second. This is asymmetric --")
+print("        it is the single easiest thing to get wrong in backends/rsim.py.")
+
+print()
+print("=" * 70)
+print("PART 5 - velocity fields are differenced per get_state() CALL")
+print("=" * 70)
+print("getState() derives vx/vy/vdir by differencing against the state captured")
+print("at the PREVIOUS getState() call, and always divides by exactly one")
+print("timeStep -- never by the time actually elapsed. Consequences:")
+print()
+sim = robosim.SSL(
+    FIELD_TYPE, N_BLUE, N_YELLOW, TIME_STEP_MS, [0.0, 0.0, 0.0, 0.0],
+    [[-1.0 - 0.3 * i, 0.0, 0.0] for i in range(N_BLUE)],
+    [[1.0 + 0.3 * i, 0.0, 0.0] for i in range(N_YELLOW)],
+)
+for _ in range(60):
+    sim.step(body_action(vx=1.0))
+v = np.asarray(sim.get_state())[BALL_STRIDE + 3]
+print(f"  60 steps then the FIRST get_state()  -> vx = {v:7.4f}   (no previous"
+      " state to difference against)")
+for _ in range(10):
+    sim.step(body_action(vx=1.0))
+v = np.asarray(sim.get_state())[BALL_STRIDE + 3]
+print(f"  10 more steps, then get_state()      -> vx = {v:7.4f}   (~10x too big:"
+      " 10 steps of travel / 1 timestep)")
+v = np.asarray(sim.get_state())[BALL_STRIDE + 3]
+print(f"  get_state() again, 0 steps between   -> vx = {v:7.4f}   (nothing moved)")
+print()
+print("ANSWER: call get_state() EXACTLY ONCE PER step() or every velocity in")
+print("        the state array is wrong. Robot commanded at 1.0 m/s reads back")
+print("        as ~10 m/s above purely from calling get_state() too rarely.")
+print()
+print("=" * 70)
+print("SUMMARY")
+print("=" * 70)
+print(f"  Division B field_type   = {div_b_field_type}")
+print(f"  BALL_STRIDE             = {BALL_STRIDE}")
+print(f"  ROBOT_STRIDE            = {ROBOT_STRIDE}")
+print(f"  action vector length    = 8")
+print(f"  state angles / poses    = degrees, heading in (0, 360], vdir in deg/s")
+print(f"  commanded vangular      = radians/second   <-- asymmetric, mind this")
+print(f"  get_state()             = must be called exactly once per step()")
 ```
 
 Run it and **save the output**:
@@ -852,20 +1007,22 @@ mkdir -p docs
 python scripts/verify_rsim.py | tee docs/RSIM_FACTS.md
 ```
 
-Now open `docs/RSIM_FACTS.md`, read it, and at the top of the file write down the three answers in plain English:
+Now open `docs/RSIM_FACTS.md`, read it, and at the top of the file write down the four answers in plain English. For reference, on our fork (rSim commit `69f0d8e`) these came back as:
 
 ```markdown
 # rSim facts — VERIFIED, do not guess
 
 Verified on: 2026-08-10, rSim commit <paste git sha>
 
-- Division B (9.0 x 6.0 m) is `field_type = ?`     <-- FILL THIS IN
-- BALL_STRIDE = ?   ROBOT_STRIDE = ?               <-- FILL THIS IN
-- Action vector length = ?                         <-- FILL THIS IN
-- Angles are in ? (degrees / radians)              <-- FILL THIS IN
+- Division B (9.0 x 6.0 m) is `field_type = 1`     (0 is Division A, 2 is a 6x4 m field)
+- BALL_STRIDE = 5   ROBOT_STRIDE = 11              (len(get_state()) == 5 + 11 * n_robots)
+- Action vector length = 8                         (a short vector reads out of bounds -- it does NOT raise)
+- Angles: state/reset poses are DEGREES, commanded angular velocity is RADIANS/second (asymmetric)
 
 <raw script output follows>
 ```
+
+If you are building against a *different* rSim fork commit, do not assume these values carry over — re-run the script and reconfirm. `field_type` in particular is not something the SSL rules fix; it is whatever this specific fork's C++ happens to map, and a different revision of the same fork could renumber it.
 
 ```bash
 git add docs/RSIM_FACTS.md scripts/verify_rsim.py
@@ -1459,7 +1616,7 @@ class Backend(Protocol):
 
 ### 9.2 `src/tbots/backends/rsim.py`
 
-> **Before you write this file, open `docs/RSIM_FACTS.md` from Step 6** and substitute the four verified numbers into the constants at the top. The values below are placeholders based on the (contradictory) upstream README.
+> **Before you write this file, open `docs/RSIM_FACTS.md` from Step 6** and substitute the four verified numbers into the constants at the top. The constants below are already the values verified against our fork (rSim commit `69f0d8e`) — if you are building against a different fork commit, re-run `scripts/verify_rsim.py` and reconfirm before trusting them. Two of these are NOT what the upstream READMEs imply: `field_type` for Division B is `1`, not `0`, and the action vector is `8` elements, not `6` — see `docs/RSIM_FACTS.md` for why a wrong action length does not raise an exception, which is what makes it dangerous.
 
 ```python
 """Training backend: rSim (ODE) running in-process.
@@ -1488,18 +1645,25 @@ from tbots.core.units import deg_to_rad, rad_to_deg, wrap_angle
 # VERIFIED CONSTANTS — see docs/RSIM_FACTS.md. Do not guess these.
 # Re-run scripts/verify_rsim.py after every rSim fork update.
 # ---------------------------------------------------------------------------
-FIELD_TYPE_DIV_B: int = 0        # <-- REPLACE with your verified value
+FIELD_TYPE_DIV_B: int = 1        # verified: 0 is Division A, 1 is Division B
 BALL_STRIDE: int = 5             # ball_x, ball_y, ball_z, ball_vx, ball_vy
 ROBOT_STRIDE: int = 11           # x, y, angle, vx, vy, vangle, ir, w0..w3
-ACTION_LEN: int = 6              # <-- REPLACE with your verified value
-ANGLES_IN_DEGREES: bool = True   # <-- REPLACE with your verified value
+ACTION_LEN: int = 8              # verified: all 8 slots are read. A shorter
+                                  # vector is NOT rejected — it silently reads
+                                  # past the end of an unchecked std::vector
+                                  # and feeds garbage to the kicker/dribbler.
+ANGLES_IN_DEGREES: bool = True   # verified. Governs STATE decode (heading,
+                                  # vdir) and POSE encode (reset/ctor) only.
+                                  # Does NOT govern commanded angular velocity
+                                  # — see the note on A_VTHETA in _encode().
 
 # Offsets within one robot's slice
 R_X, R_Y, R_THETA, R_VX, R_VY, R_VTHETA, R_IR = 0, 1, 2, 3, 4, 5, 6
 
 # Offsets within one robot's action vector
 A_USE_WHEELS, A_VX, A_VY, A_VTHETA = 0, 1, 2, 3
-A_KICK_FLAT, A_KICK_CHIP, A_DRIBBLER = 4, 5, 5   # collapse if ACTION_LEN == 6
+A_WHEEL3 = 4                     # only read when A_USE_WHEELS > 0; unused here
+A_KICK_FLAT, A_KICK_CHIP, A_DRIBBLER = 5, 6, 7
 
 
 def _ang_in(v: float) -> float:
@@ -1628,17 +1792,26 @@ class RSimBackend(Backend):
             a[A_USE_WHEELS] = 0.0          # 0 = interpret as body velocities
             a[A_VX] = c.vx
             a[A_VY] = c.vy
+            # c.vtheta is already radians/s (core units), and the action slot
+            # wants radians/s too — pass through with NO conversion. This is
+            # the one asymmetric spot in this file: everything coming OUT of
+            # rSim's state is degrees and goes through _ang_in(); this value
+            # going IN does not go through _ang_out(). Running it through
+            # _ang_out() here is the single easiest mistake to make.
             a[A_VTHETA] = c.vtheta
-            if ACTION_LEN >= 8:
-                a[4] = 0.0 if c.chip else c.kick_speed
-                a[5] = c.kick_speed if c.chip else 0.0
-                a[6] = c.dribbler
-            else:
-                a[A_KICK_FLAT] = c.kick_speed
-                a[A_DRIBBLER] = c.dribbler
+            a[A_KICK_FLAT] = 0.0 if c.chip else c.kick_speed
+            a[A_KICK_CHIP] = c.kick_speed if c.chip else 0.0
+            a[A_DRIBBLER] = c.dribbler
         return acts
 
     def _observe(self) -> WorldState:
+        # Call get_state() EXACTLY ONCE per reset()/step() and nowhere else.
+        # rSim finite-differences velocities against whatever state it
+        # captured at the PREVIOUS get_state() call, divided by a fixed
+        # timeStep — never by time actually elapsed. Two calls with no
+        # step() between them read back zero velocity; skipping a call
+        # makes the next one read back a multiple too large. Do not add an
+        # extra get_state() for logging or rendering.
         assert self._sim is not None
         raw = np.asarray(self._sim.get_state(), dtype=np.float64)
 
@@ -3077,7 +3250,7 @@ max_episode_seconds: 120
 
 backend:
   kind: rsim
-  field_type: 0         # <-- from docs/RSIM_FACTS.md
+  field_type: 1         # verified in docs/RSIM_FACTS.md -- 0 is Division A
 
 domain_randomization:
   enabled: true

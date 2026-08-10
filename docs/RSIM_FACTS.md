@@ -33,13 +33,15 @@ Regenerate with `python scripts/verify_rsim.py` after **any** rSim fork update.
 
 ## Four traps that cost real time
 
-**1. `field_type = 0` is Division A, and it is what everything currently
-defaults to.** `docs/SETUP.md` Step 9.2 ships `FIELD_TYPE_DIV_B: int = 0`
-and `configs/env/div_b_6v6.yaml` ships `field_type: 0`. Both are wrong and
-must be `1`. Left alone, we would silently train Division B policies on a
-12 x 9 m Division A pitch. Nothing errors; the goals are just in the wrong
-place. SETUP.md's own probe hardcoded `field_type=0` in PARTS 2 and 3, so it
-was measuring Division A too.
+**1. `field_type = 0` is Division A, not Division B.** `docs/SETUP.md`
+Step 9.2 and Step 14.3's `configs/env/div_b_6v6.yaml` have been corrected to
+`field_type = 1` following this finding — see `docs/SETUP_LOG.md` Step 6 for
+the correction. Left as the upstream-README-implied `0`, we would have
+silently trained Division B policies on a 12 x 9 m Division A pitch. Nothing
+errors; the goals are just in the wrong place. SETUP.md's original probe also
+hardcoded `field_type=0` in PARTS 2 and 3, so it was measuring Division A
+too — Step 6's script has been rewritten to discover the value in PART 1 and
+carry it forward instead of hardcoding it.
 
 **2. The action vector is 8, and a wrong length does not raise.**
 `SSLWorld::setActions()` reads `rbtAction[0..7]` with `std::vector::operator[]`,
@@ -47,9 +49,10 @@ which performs no bounds checking. Pass a 6-element action and C++ reads two
 elements past the end — undefined behaviour, silently interpreted as kick and
 dribbler commands. It does not throw. Any probe that concludes "length 6 was
 accepted, so 6 is correct" is reading garbage memory. The length comes from
-the source, not from the absence of an exception. `docs/SETUP.md` Step 9.2's
-`ACTION_LEN: int = 6` with its collapsed `A_KICK_FLAT/A_DRIBBLER = 4, 5`
-offsets is wrong and would fire the kicker on random data.
+the source, not from the absence of an exception. `docs/SETUP.md` Step 9.2
+has been corrected to `ACTION_LEN: int = 8` with offsets
+`A_KICK_FLAT, A_KICK_CHIP, A_DRIBBLER = 5, 6, 7` (the original collapsed
+`4, 5, 5` would have fired the kicker on random data).
 
 **3. Angle units are asymmetric.** Read degrees, write radians. Concretely,
 in `backends/rsim.py`: convert `deg -> rad` on `dir` and `vdir` coming out of

@@ -1,22 +1,17 @@
 """Empirically determine rSim's field-type mapping and array strides.
 
 Run this ONCE after building rSim, and again after any rSim fork update.
-The four answers it establishes go at the top of docs/RSIM_FACTS.md.
+The four answers it establishes go at the top of docs/RSIM_FACTS.md, and
+must exactly match FIELD_TYPE_DIV_B, ACTION_LEN, and the action-offset
+constants in backends/rsim.py (Step 9.2), and field_type in
+configs/env/div_b_6v6.yaml (Step 14.3).
 
 NOTE ON PROVENANCE. Where a fact can be read directly out of the rSim C++
 source, this script quotes that source and then confirms it at runtime.
 Black-box probing alone is not trustworthy here -- see PART 3, where the
-obvious probe gives a confidently wrong answer.
-
-This script deviates from the version printed in docs/SETUP.md, which could
-not produce correct answers as written:
-  * It discovered the field type in PART 1 but then hardcoded field_type=0
-    in PARTS 2 and 3. On this build field_type=0 is Division A, so those
-    parts measured the wrong field.
-  * It hardcoded ACT_LEN = 6 with a comment saying to adjust it by hand.
-  * Its action-length test assumed a too-short action vector raises. It does
-    not: the C++ indexes std::vector with operator[], which is unchecked, so
-    a short vector reads out of bounds and the probe reports success.
+obvious probe gives a confidently wrong answer: a too-short action vector
+does NOT raise, it silently reads past the end of an unchecked
+std::vector, so "no exception" does not mean "correct length".
 """
 
 import numpy as np
@@ -67,8 +62,8 @@ if div_b_field_type is None:
 
 print()
 print(f"ANSWER: Division B is field_type = {div_b_field_type}")
-print("Note this contradicts the placeholder FIELD_TYPE_DIV_B = 0 in")
-print("docs/SETUP.md Step 9.2 and field_type: 0 in configs/env/div_b_6v6.yaml.")
+print("This MUST match FIELD_TYPE_DIV_B in backends/rsim.py (Step 9.2)")
+print("and field_type in configs/env/div_b_6v6.yaml (Step 14.3).")
 
 # Everything below MUST use the field type established above, not a guess.
 FIELD_TYPE = div_b_field_type
