@@ -445,3 +445,51 @@ Notes:        net/sim_control.py is stubbed AND blocked: SimulatorCommand is
               net/team_client.py notes the framing difference that catches
               people out — TCP 10008 is a length-delimited stream, not the
               bare protobuf datagrams every other interface uses.
+
+## Step 11 — Skills, tactics, and RL placeholders            [PASS]
+Verification: SETUP.md Step 11 specifies no verification command, only the
+              commit. Checked instead:
+              - all 30 modules under skills/, tactics/ and rl/ import cleanly
+              - registries populate on import: skill_names() -> ['go_to_point'],
+                reward_names() -> ['alive'] (via the rl/rewards/__init__.py
+                self-registration import SETUP.md 11.6 asks for)
+              - CompositeReward([{'name':'alive','weight':2.0}]) returns 2.0
+                and records {'alive': 2.0} in .last
+              - build_skill('go_to_point', target=(1.0, 0.0)).step(...) on a
+                robot at (-1, 0) returns vx=2.5 (max_v, correctly clamped),
+                vy=0.0, status 'running'
+Deviations:   Transcribed verbatim from code blocks: skills/base.py (11.1),
+              skills/go_to_point.py (11.2), tactics/base.py (11.4),
+              rl/rewards/registry.py + rl/rewards/example.py +
+              rl/rewards/__init__.py (11.6), rl/envs/base.py (11.7).
+
+              The 16 stub files in 11.3, 11.5 and 11.8 are specified by TABLE
+              (file, class, task id, one-line purpose), not as code blocks, so
+              as in Step 10.4 I wrote signatures rather than transcribing them:
+                skills/  face_point, shoot, pass_to, receive_pass, dribble,
+                         intercept, goalkeep  -> class with the Skill protocol
+                         methods reset/step/status, each raising
+                         NotImplementedError("TASK-03x")
+                skills/learned.py -> LearnedSkill, docstring transcribed
+                         VERBATIM from 11.3 (SETUP.md gives it in full)
+                tactics/ roles (assign_roles function — the table describes a
+                         matching routine, not a Tactic), scripted, learned,
+                         restarts -> Tactic subclasses with decide()
+                rl/      envs/skill_env, envs/tactics_env (SSLEnv subclasses
+                         overriding the _observe/_decode hooks base.py already
+                         declares), envs/synthetic_referee, obs/builders,
+                         wrappers/domain_rand, vec, train, opponents
+              Every body is `raise NotImplementedError("TASK-0xx")`. Nothing
+              on the task board was implemented — CLAUDE.md §4.
+Notes:        Each stub docstring carries the warning attached to it in
+              SETUP.md rather than just the file's name, so a recruit opening
+              the file gets the reasoning without re-reading the spec —
+              domain_rand says sim-to-real fails without it, obs/builders says
+              the encoding must be permutation-invariant and fixed-size across
+              curriculum stages (9.2a), restarts says trigger on
+              GameState.counter not on .play, opponents says build it now.
+
+              rl/envs/base.py's SSLEnv._observe/_decode raise a bare
+              NotImplementedError with no task id. That is correct and is not
+              a stub — they are abstract hooks for subclasses, and SETUP.md
+              writes them that way. The task ids live in the subclasses.
