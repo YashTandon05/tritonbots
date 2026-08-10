@@ -356,3 +356,44 @@ Notes:        Rule 1 holds — nothing in core/ imports outside core/. The only
               against the current rulebook before the first match; at runtime
               prefer the geometry from the SSL-Vision SSL_GeometryData packet
               and treat these as fallback.
+
+## Step 9 — The backend layer            [PASS]
+Verification: SETUP.md Step 9 specifies no verification command, only the
+              commit. Smoke-checked instead:
+                RSimBackend(6,6).reset(Scenario.single_robot_at(-1.0, 0.5))
+                -> us0 (-1.0, 0.5), n_us 6, n_them 6  (state-length guard in
+                reset() did not fire, so BALL_STRIDE/ROBOT_STRIDE agree with
+                the installed rSim)
+Deviations:   None. backends/base.py, backends/rsim.py and backends/network.py
+              transcribed verbatim from SETUP.md 9.1, 9.2 and 9.3.
+Notes:        Constants in backends/rsim.py were cross-checked against
+              docs/RSIM_FACTS.md rather than taken on trust:
+                FIELD_TYPE_DIV_B = 1, BALL_STRIDE = 5, ROBOT_STRIDE = 11,
+                ACTION_LEN = 8, A_KICK_FLAT/A_KICK_CHIP/A_DRIBBLER = 5/6/7,
+                ANGLES_IN_DEGREES = True, and vtheta passed to slot [3] with
+                NO conversion (rSim's asymmetry: degrees out, radians in).
+              SETUP.md Step 9.2 had already been corrected to these values in
+              commit 1d2baa4, so transcription and RSIM_FACTS.md agree; no
+              placeholder values were carried over.
+
+              backends/network.py is not importable yet and will not be until
+              TASK-010/011/015/020 land — it imports net.vision,
+              net.robot_control, net.sim_control and perception.tracker at
+              module level, and net/sim_control.py is itself blocked on the
+              missing SimulatorCommand proto (see Step 7). This is expected:
+              nothing imports it, and tests/test_backend_parity.py only
+              imports it inside the test that is skipped without
+              TBOTS_NETWORK_TESTS=1.
+
+              `make lint` FAILS on this faithfully-transcribed code, and I did
+              not "fix" it (CLAUDE.md §8: transcribe, do not reformat). ruff
+              0.16.2's default rule set flags 8 issues in backends/ and 2 in
+              core/ — all cosmetic: unused `field` import in base.py, unused
+              `import math` in rsim.py, `typing.Sequence` vs
+              `collections.abc.Sequence`, quoted self-referential annotations
+              that `from __future__ import annotations` makes unnecessary, and
+              `int(round(...))`. SETUP.md's pyproject pins no ruff `select`, so
+              the effective rule set drifts with the ruff version. Worth a
+              human decision: either pin `[tool.ruff.lint] select` in
+              pyproject.toml, or apply `ruff format`/`--fix` once across the
+              tree after transcription is complete.
