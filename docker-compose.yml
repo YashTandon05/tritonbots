@@ -1,0 +1,75 @@
+# Full local match stack. `docker compose up`
+#
+# network_mode: host is required for multicast to reach your host Python
+# process. This works on Linux and inside WSL2.
+#
+# *** THIS FILE DOES NOT WORK ON macOS. ***
+# Docker Desktop for Mac has no host networking, so multicast cannot cross
+# the VM boundary. Mac users: run the game controller and ssl-vision-client
+# as native binaries (Steps 13.1 Option A and 13.3), and use a Linux/WSL
+# machine for the networked simulator. See the platform matrix in Step 0.
+#
+# VERIFY IMAGE TAGS against hub.docker.com before trusting them. Tags move.
+# Tags below were verified against hub.docker.com on 2026-08-10; see
+# docs/SETUP_LOG.md, Step 13, for what was checked and why each is pinned.
+
+services:
+  game-controller:
+    # Pinned to 3.21.0 to match protos/ssl-game-controller, which is pinned
+    # at tag v3.21.0. The referee protobufs in src/tbots/gen/ were generated
+    # from that revision. Bump both together or not at all.
+    # (Latest published at time of writing: 3.23.0.)
+    image: robocupssl/ssl-game-controller:3.21.0
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./tools/gc-config:/config
+      - ./tools/gc-data:/data
+    command: ["-address", ":8081"]
+
+  simulator:
+    # `latest` is 4 years old (pushed 2022-04-20) and is byte-identical to
+    # commit-6a4e1c06533b (same digest,
+    # sha256:19d0df91697c82ebfd1f86eca5ccf6b8be2f0d64b22078725257c3a5856b5ddc).
+    # Nothing newer has ever been published. Pinned to the commit tag so a
+    # future push to `latest` cannot silently change our physics.
+    image: roboticserlangen/simulatorcli:commit-6a4e1c06533b
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      GEOMETRY: "2020"
+      REALISM: "RC2021"
+    # Reminder: this publishes vision on 10020, not 10006.
+    # configs/net/dev.yaml sets vision.port: 10020 to match.
+
+  vision-client:
+    # Pinned to the same version as the tools/bin/ssl-vision-client binary
+    # that scripts/fetch_tools.sh fetches.
+    image: robocupssl/ssl-vision-client:2.1.1
+    network_mode: host
+    restart: unless-stopped
+    command: ["-address", ":8082", "-visionAddress", "224.5.23.2:10020"]
+
+  # Uncomment once you need ball placement and robot-count enforcement.
+  # The GC cannot do those without a tracker source.
+  # autoref:
+  #   image: <check https://github.com/TIGERs-Mannheim/AutoReferee releases>
+  #   network_mode: host
+
+  # Handles ball/robot replacement and pushes robot specs to the simulator.
+  # It picks Division A or B geometry based on the max robot count in the
+  # referee message, and only applies it during NORMAL_FIRST_HALF_PRE.
+  # visionAddress is 10020 here, not the classic 10006, because the vision
+  # source in this stack is the ER-Force simulator above.
+  # simulation-controller:
+  #   image: robocupssl/ssl-simulation-controller:0.13.0
+  #   network_mode: host
+  #   command:
+  #     - "-refereeAddress"
+  #     - "224.5.23.1:10003"
+  #     - "-visionAddress"
+  #     - "224.5.23.2:10020"
+  #     - "-trackerAddress"
+  #     - "224.5.23.2:10010"
+  #     - "-simControlPort"
+  #     - "10300"

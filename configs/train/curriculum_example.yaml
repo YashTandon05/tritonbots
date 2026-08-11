@@ -1,0 +1,35 @@
+# A curriculum is an ordered list of stages. The trainer advances when the
+# promotion criterion is met, or when max_steps is exhausted.
+#
+# The observation encoder MUST produce a fixed-size vector across every
+# stage, or nothing transfers and the curriculum is decorative.
+# See Step 9.2a.
+
+observation:
+  encoder: set_encoder     # or: pad_and_mask
+  max_robots: 6            # padding width; constant across all stages
+
+stages:
+  - name: solo
+    n_us: 1
+    n_them: 0
+    max_steps: 2_000_000
+    promote_when: {metric: success_rate, above: 0.9}
+
+  - name: one_v_one
+    n_us: 1
+    n_them: 1
+    max_steps: 5_000_000
+    promote_when: {metric: success_rate, above: 0.7}
+
+  - name: two_v_two
+    n_us: 2
+    n_them: 2
+    max_steps: 10_000_000
+    promote_when: {metric: goal_diff_per_episode, above: 0.3}
+
+  - name: full
+    n_us: 6
+    n_them: 6
+    max_steps: 50_000_000
+    promote_when: null       # terminal stage

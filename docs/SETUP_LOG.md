@@ -610,3 +610,117 @@ Notes:        THE RULE SET IS NOW PINNED in pyproject.toml under
               untouched. The discarded diffs are saved as
               rsim-ruff-churn.patch / rsoccer-ruff-churn.patch in this
               session's scratchpad if anyone wants them back.
+
+## Step 13 — External tools            [PASS]
+Verification: docker compose up -d; sleep 8; docker compose ps
+              -> all three services Up (game-controller, simulator,
+                 vision-client)
+              curl -sf http://localhost:8081 > /dev/null  -> "GC UI ok"
+              curl -sf http://localhost:8082 > /dev/null  -> "vision-client ok"
+              Stack torn down again with `docker compose down` after the gate
+              passed, so `restart: unless-stopped` does not resurrect three
+              containers on every boot.
+Deviations:   VERSIONS AND ASSET NAMES WERE QUERIED FROM THE GITHUB RELEASES
+              API AND DOCKER HUB ON 2026-08-10, NOT COPIED FROM SETUP.md.
+              What was actually used:
+
+                ssl-game-controller  v3.21.0
+                  asset: ssl-game-controller_v3.21.0_linux_amd64  (18264991 B)
+                  url:   https://github.com/RoboCup-SSL/ssl-game-controller/
+                         releases/download/v3.21.0/
+                         ssl-game-controller_v3.21.0_linux_amd64
+                  SETUP.md's URL pattern for this one is CORRECT and the
+                  v3.21.0 tag still exists.
+                  Latest available is v3.23.0 (2026-07-02). NOT taken --
+                  protos/ssl-game-controller is pinned at tag v3.21.0 and our
+                  referee protobufs were generated from that revision. Bumping
+                  the binary alone would drift the wire format from the code.
+                  Bump both together or neither.
+
+                ssl-vision-client    v2.1.1  (latest; 2026-06-29)
+                  asset: ssl-vision-client_v2.1.1_linux_amd64  (14762989 B)
+                  SETUP.md Step 13.3 and its fetch_tools.sh both use
+                  .../releases/latest/download/ssl-vision-client_linux_amd64.
+                  THAT URL 404s -- verified, it redirects to
+                  .../download/v2.1.1/ssl-vision-client_linux_amd64 which does
+                  not exist. The real asset name carries the version, exactly
+                  like the game controller's. scripts/fetch_tools.sh has been
+                  corrected to a pinned VC_VERSION with the versioned asset
+                  name; had it been transcribed as written it would have
+                  failed for every recruit who ran it.
+
+              docker-compose.yml image tags, all checked on hub.docker.com:
+                robocupssl/ssl-game-controller:3.21.0    kept (exists; see above)
+                robocupssl/ssl-vision-client:latest   -> :2.1.1
+                  Pinned so the container and the tools/bin/ binary are the
+                  same build.
+                roboticserlangen/simulatorcli:latest  -> :commit-6a4e1c06533b
+                  Same image, byte for byte: both tags resolve to digest
+                  sha256:19d0df91697c82ebfd1f86eca5ccf6b8be2f0d64b22078725257c
+                  3a5856b5ddc. Pinned so a future push to `latest` cannot
+                  silently change our physics under a trained policy.
+
+              VISION PORT 10020, not 10006, everywhere in the dev stack --
+              on human instruction, and confirmed empirically (see Notes).
+              Changed in the compose file's vision-client command (SETUP.md
+              already had this right) and additionally in the commented-out
+              simulation-controller block, whose -visionAddress was
+              224.5.23.2:10006 in SETUP.md. That block's vision source is the
+              ER-Force simulator two services above it, so 10006 was simply
+              wrong and would have failed silently the day someone uncommented
+              it.
+
+              grSim NOT installed, per SETUP.md 13.2. No action needed --
+              nothing in the build referenced it.
+
+              Registered our team name in tools/gc-config/engine.yaml
+              (SETUP.md 13.1(c)(a), the local-override half). Inserted
+              "TritonBots" into the "teams" array, which the GC wrote there
+              itself on first start.
+Notes:        THE 10020 CLAIM IS NOW VERIFIED, NOT ASSUMED. With the stack up,
+              a multicast listener saw 5/5 packets on 224.5.23.2:10020
+              (1324-byte vision frames) and ZERO on 224.5.23.2:10006 in the
+              same window. ER-Force publishes on 10020 only.
+
+              OPEN GAP, needs a human decision, NOT fixed here.
+              src/tbots/net/vision_publisher.py hardcodes a default of
+              port=10006 in its constructor signature, and
+              src/tbots/apps/viz_rsim.py constructs VisionPublisher without
+              passing a port. Nothing in the tree reads configs/net/*.yaml at
+              all yet -- the config loader is fall TASK work. Consequence:
+              `docker compose up` + `python -m tbots.apps.viz_rsim` renders
+              NOTHING, because the publisher sends on 10006 and the compose
+              vision-client listens on 10020. I did not "fix" this by editing
+              vision_publisher.py: that file is transcribed from SETUP.md
+              Step 10.3 and changing its default would move the port
+              constant back out of config and into code, which is the exact
+              thing the ER-Force port note warns against. The workaround is
+              documented in configs/net/dev.yaml -- run tools/bin/
+              ssl-vision-client -visionAddress 224.5.23.2:10006 locally for
+              rSim visualisation. The real fix is the config loader.
+
+              ANOTHER STALE IMAGE, worth knowing before September.
+              SETUP.md 13.2 drops grSim partly because its "published Docker
+              image is 4+ years stale". roboticserlangen/simulatorcli's
+              newest tag is from 2022-04-20 -- also 4+ years. The rest of the
+              13.2 argument (headless, realism profiles, used by the official
+              virtual tournament setup) is unaffected and the image runs fine
+              here, so this is not a reason to revisit the decision. But the
+              stated contrast is no longer accurate, and if we ever need a
+              newer ER-Force build we will be compiling it from source.
+
+              "Tritons RCSC" was already in the GC's default team list. That
+              is a DIFFERENT team, not us. Ours is "TritonBots", one word, and
+              it is now a separate 55th entry. Do not let anyone "deduplicate"
+              these.
+
+              tools/bin/ is gitignored, so the two binaries are NOT committed
+              -- rerun scripts/fetch_tools.sh on a fresh clone. Added
+              tools/gc-config/state-store.json.stream to .gitignore; the GC
+              writes that runtime state into the mounted config directory,
+              alongside the two config files we do want tracked.
+
+              Upstream PR to add TritonBots to defaultTeams in the GC repo is
+              deliberately NOT done -- SETUP.md 13.1 says do that in
+              September, not April.
+

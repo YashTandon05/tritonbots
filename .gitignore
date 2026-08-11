@@ -27,3 +27,6 @@ wandb/
 .vscode/
 .idea/
 .DS_Store
+
+# Game controller runtime state written into the mounted config dir
+tools/gc-config/state-store.json.stream

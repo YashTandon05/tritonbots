@@ -1,0 +1,50 @@
+# Development networking. TTL 0 keeps every packet on this machine, so two
+# people on the same wifi cannot referee each other's matches.
+
+team_name: "TritonBots"
+
+multicast_ttl: 0
+
+# Linux / WSL2: "0.0.0.0" is fine.
+# macOS: MUST be "127.0.0.1" -- joining on the wildcard interface is
+# unreliable, and you also need the loopback multicast route from Step 1M.5.
+interface: "0.0.0.0"
+
+vision:
+  group: "224.5.23.2"
+  # 10006 is the classic SSL-Vision port, used by our own VisionPublisher.
+  # The ER-Force simulator publishes on 10020. Whichever you are pointing
+  # at right now, this is the knob.
+  #
+  # Set to 10020 because our dev stack IS the ER-Force simulator:
+  # docker-compose.yml runs simulator-cli, and its vision-client service
+  # listens on 224.5.23.2:10020 to match. Both ends of this file's dev
+  # stack therefore agree.
+  #
+  # KNOWN GAP: src/tbots/net/vision_publisher.py still defaults to port
+  # 10006 in code, and nothing reads this file yet -- the config loader is
+  # a fall TASK. So `python -m tbots.apps.viz_rsim` publishes on 10006 and
+  # the compose vision-client (10020) will not see it. Until the loader
+  # exists, visualise rSim with a locally run binary instead:
+  #     tools/bin/ssl-vision-client -address :8082 \
+  #       -visionAddress 224.5.23.2:10006
+  port: 10020
+
+referee:
+  group: "224.5.23.1"
+  port: 10003
+
+tracker:
+  group: "224.5.23.2"
+  port: 10010
+
+simulator:
+  host: "127.0.0.1"
+  control_port: 10300
+  blue_port: 10301
+  yellow_port: 10302
+
+game_controller:
+  ui_port: 8081
+  team_port: 10008     # TCP; TLS on 10108
+  ci_port: 10009       # TCP; only open in ci time-acquisition-mode

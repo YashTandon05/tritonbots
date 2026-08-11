@@ -1,0 +1,22 @@
+# Competition networking. Identical addresses, TTL 1 so packets actually
+# reach the field network. Simulation control is NOT available -- at a
+# tournament that port is locked down, so nothing in the match path may
+# depend on teleporting the ball.
+#
+# vision.port stays 10006 here: at a real event the source is real
+# SSL-Vision on the classic port, not the ER-Force simulator. Only
+# configs/net/dev.yaml uses 10020.
+
+team_name: "TritonBots"
+multicast_ttl: 1
+interface: "0.0.0.0"
+
+vision:    {group: "224.5.23.2", port: 10006}
+referee:   {group: "224.5.23.1", port: 10003}
+tracker:   {group: "224.5.23.2", port: 10010}
+
+simulator: null        # deliberately unavailable
+
+game_controller:
+  team_port: 10008
+  ci_port: null
