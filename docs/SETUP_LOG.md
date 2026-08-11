@@ -724,3 +724,47 @@ Notes:        THE 10020 CLAIM IS NOW VERIFIED, NOT ASSUMED. With the stack up,
               deliberately NOT done -- SETUP.md 13.1 says do that in
               September, not April.
 
+## Step 14 — Configuration            [PASS]
+Verification: python -c "yaml.safe_load" over all five files in configs/
+              -> all five parse; spot-checked values:
+                 net/dev.yaml         vision {224.5.23.2, 10020}, ttl 0
+                 net/competition.yaml vision {224.5.23.2, 10006}, ttl 1
+                 env/div_b_6v6.yaml   field_type 1, control_hz 60
+                 train/curriculum_example.yaml  max_steps parse as ints
+                   (2_000_000 -> 2000000; PyYAML honours YAML 1.1 underscores,
+                   so the underscored literals are not silently strings)
+              team_name is exactly "TritonBots" in both net configs.
+Deviations:   configs/net/dev.yaml has vision.port: 10020, where SETUP.md
+              Step 14.1 writes 10006. On human instruction, and correct for
+              this stack: the dev vision source IS the ER-Force simulator in
+              docker-compose.yml. SETUP.md's own note in 13.2 says to set
+              10020 when running against ER-Force -- 14.1's literal 10006 and
+              13.2's instruction contradict each other, and 13.2 is the one
+              that matches reality. The 10006 rationale is preserved in the
+              file's comments rather than deleted, since our own
+              VisionPublisher does use the classic port. See the OPEN GAP in
+              the Step 13 entry above -- this config disagreeing with
+              vision_publisher.py's hardcoded default is a real, currently
+              unresolved inconsistency, not something these YAML edits fixed.
+
+              configs/net/competition.yaml keeps 10006 unchanged. At a real
+              event the source is real SSL-Vision on the classic port, and
+              there is no ER-Force simulator in that path. Only dev.yaml moves.
+
+              All five files otherwise transcribed verbatim from SETUP.md
+              14.1-14.5. Added explanatory comments in the two net configs
+              about which port applies where; no values changed beyond
+              dev.yaml's vision.port.
+Notes:        field_type: 1 in env/div_b_6v6.yaml is transcribed as SETUP.md
+              14.3 writes it, and it agrees with the empirical finding in
+              docs/RSIM_FACTS.md (Division B is field_type 1; 0 is Division
+              A). Note that RSIM_FACTS.md line 129 warns that SETUP.md
+              elsewhere still carries the wrong placeholder -- Step 9.2's
+              FIELD_TYPE_DIV_B = 0. Step 14.3 itself is correct; the stale
+              value is in Step 9.2. Already recorded under Step 6/9; repeated
+              here because this is the file people will actually read.
+
+              Nothing consumes configs/ yet. These files are declarative
+              until the config loader lands, so a wrong value here fails
+              nowhere today and everywhere later. They were checked by
+              parsing and by eye, not by a running system.
