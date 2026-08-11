@@ -28,5 +28,8 @@ wandb/
 .idea/
 .DS_Store
 
-# Game controller runtime state written into the mounted config dir
+# Game controller runtime state written into the mounted config dir.
+# "Reset Match" in the UI also archives the old store under a UTC-stamped
+# name, so ignore that whole family, not just the live file.
 tools/gc-config/state-store.json.stream
+tools/gc-config/*_state-store.json.stream

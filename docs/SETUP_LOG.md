@@ -768,3 +768,64 @@ Notes:        field_type: 1 in env/div_b_6v6.yaml is transcribed as SETUP.md
               until the config loader lands, so a wrong value here fails
               nowhere today and everywhere later. They were checked by
               parsing and by eye, not by a running system.
+
+## Step 16 — The acceptance checklist            [PASS]
+Verification: All seven items in SETUP.md Step 16, run in order.
+              1. `make proto` -> 23 modules generated from 23 protos;
+                 `python -c "from tbots._pb.state.ssl_gc_referee_message_pb2
+                 import Referee"` -> ok.
+              2. `pytest -q tests/test_rsim_backend.py` -> 4 passed.
+              3. `docker compose up -d game-controller`; :8081 team dropdown
+                 shows `TritonBots`. Verified in an earlier session (human
+                 confirmed, not re-clicked this pass).
+              4. `python -m tbots.apps.ref_monitor --team "TritonBots"` with
+                 GC running; Stop/Force Start/Halt in the GC UI each printed
+                 a line within a second, counter incrementing. Verified in
+                 an earlier session (human confirmed, not re-clicked this
+                 pass).
+              5. `docker compose up -d vision-client`; :8082 -> HTTP 200,
+                 reachable and listening.
+              6. `python -m tbots.apps.viz_rsim --realtime --seconds 60` ->
+                 six robots orbiting the centre circle at :8082 (human
+                 confirmed). `python -m tbots.apps.viz_rsim --seconds 60 |
+                 tail -1` -> 521 steps/s, recorded in README.md.
+              7. `docker compose down && docker compose up -d && sleep 5 &&
+                 docker compose ps` -> all three services (game-controller,
+                 simulator, vision-client) `Up`, no restart loops. Re-checked
+                 8s later, still up, no churn.
+Deviations:   src/tbots/net/vision_publisher.py's `publish_geometry()` now
+              populates `field_lines`, `field_arcs`, `penalty_area_depth`,
+              and `penalty_area_width`, none of which are in SETUP.md
+              Step 10.3's transcribed code (that version sends only
+              length/width/goal/boundary). Reason: ssl-vision-client draws
+              nothing but a bare default centre circle without explicit
+              line/arc geometry -- field_length/field_width alone size the
+              canvas, they don't produce markings. Line/shape names and
+              types are the league's (SSL_FieldShapeType), matched by the
+              client, not invented here.
+
+              Note for whoever reviews this: Step 13's log entry explicitly
+              declined to edit this same file to fix the dev/competition
+              port mismatch, on the grounds that it's transcribed verbatim
+              from Step 10.3 and editing it would blur the config/code
+              boundary. This change is a different kind of edit -- it adds
+              protobuf field population (code), not a port default (which
+              belongs in config) -- so it doesn't reopen that question, but
+              flagging the tension since both touch the same "don't touch
+              this file" instinct. Kept on human instruction (2026-08-10);
+              not reverted to the literal spec.
+
+              .gitignore: broadened the state-store ignore from the single
+              literal `state-store.json.stream` (added in Step 13) to also
+              match `*_state-store.json.stream`. The GC's "Reset Match"
+              button archives the old store under a UTC-stamped filename
+              before starting a new one; only the exact filename was
+              ignored before, so archived copies were showing up as
+              untracked.
+Notes:        Step 16 is the last thing SETUP.md calls "simulator setup" --
+              Step 17 (HPC image) is a separate concern (Apptainer packaging
+              for the cluster), not part of this. tritonbots-simulator-1
+              (ER-Force, the match backend) had been manually stopped
+              (exit 143) before this pass; item 7's down/up cycle brought
+              it back clean, so no action was needed beyond running the
+              checklist as written.
