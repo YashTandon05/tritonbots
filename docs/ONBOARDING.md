@@ -1,10 +1,22 @@
 # TritonBots — Onboarding
 
-**Welcome.** By the end of today you will have the codebase running, watched six robots move in your browser, trained a policy, and written code that changed how it behaves.
+**Welcome.** By the end of today you will have the codebase running, watched six robots move in your browser, and talked to the referee. Once `tbots.rl.train` and `tbots.apps.eval` land (see the status note below), the same day also gets you a trained policy and code that changed how it behaves — that part of this guide is written for that point.
 
 **This guide assumes the codebase already exists and works.** If you are standing up a new repo from scratch, you want `docs/SETUP.md` instead. If you are a new team member joining an existing project, you are in the right place.
 
 **Time:** about 4 hours for Part 1. Parts 2 and 3 are your first and second weeks.
+
+> **Status as of 2026-08-10.** Sections 1.1–1.5 — install, build, watch rSim
+> render in the browser, talk to the referee — work today, exactly as
+> written. **1.6 onward describe the finished system and are not runnable
+> yet.** `python -m tbots.rl.train` raises `NotImplementedError("TASK-056")`
+> on purpose — see `docs/SETUP.md`'s task board, which deliberately leaves
+> the RL/skills/tactics layers as recruit work. `tbots.apps.eval`, referenced
+> throughout 1.6, 1.7, and Part 2, does not exist in the repo at all yet and
+> is not currently on the task board either — that's a real gap, flag it to
+> whoever picks up TASK-056 so an eval app gets tracked and built alongside
+> it. Everything below is accurate about *what will exist*; treat 1.6+ as
+> a preview to read, not a command to run, until those land.
 
 ---
 
@@ -113,7 +125,7 @@ You will start by writing reward functions, then skills, then tactics.
 Pick your platform. **Do not mix and match.**
 
 <details open>
-<summary><b>Ubuntu 22.04 / WSL2</b></summary>
+<summary><b>Ubuntu 24.04 / WSL2</b></summary>
 
 > **WSL users:** run everything *inside* WSL — Python, Docker, the binaries. Do not use Docker Desktop's Windows backend, and do not clone into `/mnt/c/...`. Building C++ across the Windows filesystem boundary is ~10× slower and occasionally corrupts artifacts.
 
@@ -126,7 +138,7 @@ sudo apt-get install -y \
   libgl1-mesa-dev libglu1-mesa-dev freeglut3-dev libsdl2-dev \
   protobuf-compiler
 
-sudo apt-get install -y docker.io docker-compose-plugin
+sudo apt-get install -y docker.io docker-compose-v2
 sudo usermod -aG docker "$USER"
 newgrp docker
 
@@ -134,7 +146,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
 ```
 
-Now ODE 0.16.2 — **the step most likely to fail**. Ubuntu's `libode-dev` is the wrong version and is not built the way rSim needs. Build from source:
+Now ODE 0.16.2 — **the step most likely to fail, and the one most likely to fail silently.** Ubuntu 24.04's packaged `libode-dev` **is also version 0.16.2** — the version string matches ours exactly — but it is not built with the flags rSim needs (double precision, libccd collision). A version check alone will pass against it and rSim will then compile, import, and run cleanly while producing wrong physics. Build from source, and use all three verify commands below, not just the first:
 
 ```bash
 cd /tmp
@@ -149,13 +161,20 @@ echo 'export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-**Verify — all three must succeed:**
+**Verify — all four must succeed:**
 
 ```bash
 pkg-config --modversion ode          # must print exactly: 0.16.2
+pkg-config --variable=libdir ode     # MUST print /usr/local/lib
 grep dDOUBLE /usr/local/include/ode/precision.h   # must find it
 docker run --rm hello-world          # must print "Hello from Docker!"
 ```
+
+**The second line is not optional.** If it prints `/usr/lib/x86_64-linux-gnu`
+instead of `/usr/local/lib`, you are still resolving to the packaged ODE —
+go back and remove `libode-dev`/`libode8t64` first (`sudo apt-get remove
+libode-dev libode8t64`), confirm `pkg-config --modversion ode` fails with
+"not found", then rebuild from source above.
 
 </details>
 
@@ -227,7 +246,7 @@ Docker Desktop is optional on macOS and **will not** run our compose stack (no h
 
 ```bash
 mkdir -p ~/code && cd ~/code
-git clone --recurse-submodules https://github.com/tritonbots/tritonbots.git
+git clone --recurse-submodules https://github.com/YashTandon05/tritonbots.git
 cd tritonbots
 ```
 
@@ -239,7 +258,7 @@ source .venv/bin/activate
 
 uv pip install -e ".[dev,train]"     # our package
 uv pip install -e third_party/rsim   # compiles C++ against ODE — takes 1-3 min
-uv pip install -e third_party/rsoccer --no-deps
+uv pip install -e third_party/rsoccer  # our fork already drops the stale rc-robosim PyPI pin
 make proto                            # generate Python from the league .proto files
 ```
 
@@ -254,7 +273,7 @@ Then fetch the two standalone tools (the game controller and the visualizer — 
 ```bash
 python -c "import robosim; print('rsim ok')"
 python -c "import tbots; print('tbots ok')"
-python -c "from tbots._pb.ssl_gc_referee_message_pb2 import Referee; print('protos ok')"
+python -c "from tbots._pb.state.ssl_gc_referee_message_pb2 import Referee; print('protos ok')"
 ls tools/bin/                         # ssl-game-controller, ssl-vision-client
 ```
 
@@ -294,11 +313,19 @@ Open **http://localhost:8082**. You should see an empty green field.
 **Terminal B — run the training simulator and stream it to the browser:**
 
 ```bash
+# Linux / WSL2 -- --port 10020 matches the compose vision-client, which
+# shares its multicast port with the ER-Force simulator container
 cd ~/code/tritonbots && source .venv/bin/activate
+python -m tbots.apps.viz_rsim --realtime --seconds 60 --port 10020
+
+# macOS -- the native ssl-vision-client above listens on the default 10006,
+# so drop --port entirely
 python -m tbots.apps.viz_rsim --realtime --seconds 60
 ```
 
-Six robots should orbit the centre circle in your browser.
+Six robots should orbit the centre circle in your browser. **Nothing
+rendering?** You are almost certainly on the wrong port — rSim's publisher
+defaults to 10006, but the docker-compose vision-client listens on 10020.
 
 **Stop and appreciate what just happened.** That browser tab is the same tool we use to watch a live competition match. It is currently rendering a physics engine running *inside your Python process*, because our `VisionPublisher` converts a `WorldState` into the league's own vision packets. The training simulator, our internal data contract, and the official protocol all agree with each other.
 
@@ -351,6 +378,12 @@ If nothing prints, go to [Common errors → No referee messages](#no-referee-mes
 ---
 
 ### 1.6 — Your first training run
+
+> **Not runnable yet.** `tbots.rl.train` is TASK-056 — it currently raises
+> `NotImplementedError` on purpose (see the status note at the top of this
+> doc). `tbots.apps.eval`, used below, doesn't exist in the repo at all.
+> This section documents the intended shape of the workflow; treat it as a
+> preview until both land.
 
 ```bash
 python -m tbots.rl.train \
@@ -617,7 +650,7 @@ Two rules if you use it:
 
 ### Self-play
 
-Build against `env.set_opponent(policy)` from the start, even while the default is `ScriptedDefense()`. Retrofitting an opponent pool into an environment that assumed a static adversary is a multi-day refactor nobody enjoys.
+Build against `env.set_opponent(policy)` from the start, even while the default is `ScriptedTactic()`. Retrofitting an opponent pool into an environment that assumed a static adversary is a multi-day refactor nobody enjoys.
 
 ---
 
@@ -657,13 +690,13 @@ make fmt && make lint && make test
 | Regenerate protobufs | `make proto` |
 | Run tests | `make test` |
 | Format and lint | `make fmt && make lint` |
-| Watch rSim in the browser | `python -m tbots.apps.viz_rsim --realtime` |
+| Watch rSim in the browser | `python -m tbots.apps.viz_rsim --realtime --port 10020` (WSL2/Linux docker-compose stack) or `--realtime` alone against a native ssl-vision-client |
 | Benchmark my machine | `python -m tbots.apps.viz_rsim --seconds 60 \| tail -1` |
 | Monitor the referee | `python -m tbots.apps.ref_monitor --team "TritonBots"` |
-| Train | `python -m tbots.rl.train env=div_b_6v6 reward=NAME train.run_dir=runs/NAME` |
+| Train (not yet implemented, TASK-056) | `python -m tbots.rl.train env=div_b_6v6 reward=NAME train.run_dir=runs/NAME` |
 | Resume a run | add `train.resume_from=runs/NAME/latest.pt` |
 | Watch metrics | `tensorboard --logdir runs/` |
-| Evaluate a checkpoint | `python -m tbots.apps.eval --checkpoint runs/NAME/latest.pt --render vision --realtime` |
+| Evaluate a checkpoint (`apps/eval.py` doesn't exist yet) | `python -m tbots.apps.eval --checkpoint runs/NAME/latest.pt --render vision --realtime` |
 | List registered rewards | `python -c "import tbots.rl.rewards as r; print(r.reward_names())"` |
 | List registered skills | `python -c "from tbots.skills.base import skill_names; import tbots.skills; print(skill_names())"` |
 | Start the stack | `docker compose up -d` |

@@ -23,11 +23,9 @@ vision:
   #
   # KNOWN GAP: src/tbots/net/vision_publisher.py still defaults to port
   # 10006 in code, and nothing reads this file yet -- the config loader is
-  # a fall TASK. So `python -m tbots.apps.viz_rsim` publishes on 10006 and
-  # the compose vision-client (10020) will not see it. Until the loader
-  # exists, visualise rSim with a locally run binary instead:
-  #     tools/bin/ssl-vision-client -address :8082 \
-  #       -visionAddress 224.5.23.2:10006
+  # a fall TASK. Until the loader exists, apps that publish vision take an
+  # explicit --port: `python -m tbots.apps.viz_rsim --port 10020` against
+  # this compose stack. See docs/SETUP_LOG.md, "Post-Step-16" entry.
   port: 10020
 
 referee:

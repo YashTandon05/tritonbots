@@ -24,10 +24,18 @@ def main() -> None:
     p.add_argument("--realtime", action="store_true",
                    help="sleep to match wall clock (needed to actually watch)")
     p.add_argument("--seconds", type=float, default=60.0)
+    p.add_argument("--port", type=int, default=10006,
+                   help="vision multicast port. Default 10006 matches "
+                        "VisionPublisher and a native ssl-vision-client "
+                        "(macOS, or Step 13's local workaround). The "
+                        "docker-compose vision-client listens on 10020 "
+                        "instead (it shares the port with the ER-Force "
+                        "simulator container) -- pass --port 10020 when "
+                        "watching through `docker compose up -d`.")
     args = p.parse_args()
 
     backend = RSimBackend(n_us=6, n_them=6, dt=1.0 / 60.0, geometry=DIV_B)
-    pub = VisionPublisher(geometry=DIV_B)
+    pub = VisionPublisher(geometry=DIV_B, port=args.port)
     pub.publish_geometry()
 
     world = backend.reset(Scenario.kickoff())

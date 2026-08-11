@@ -12,7 +12,12 @@
     make proto              # regenerate protobufs
     make test                # run tests
     docker compose up -d    # referee + simulator + visualizer
-    python -m tbots.apps.viz_rsim --realtime   # watch rSim at localhost:8082
+    python -m tbots.apps.viz_rsim --realtime --port 10020   # watch rSim at localhost:8082
+
+    # --port 10020 matches the docker-compose vision-client, which shares
+    # its multicast port with the ER-Force simulator container. Watching a
+    # real match instead of rSim, or using a native (non-docker)
+    # ssl-vision-client? Drop --port -- the default 10006 is correct there.
 
 ## Measured throughput
 

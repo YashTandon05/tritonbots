@@ -829,3 +829,122 @@ Notes:        Step 16 is the last thing SETUP.md calls "simulator setup" --
               (exit 143) before this pass; item 7's down/up cycle brought
               it back clean, so no action was needed beyond running the
               checklist as written.
+
+## Post-Step-16 — resolved the vision-port OPEN GAP from Step 13/14   [PASS]
+Verification: With the compose stack up, bound a raw multicast listener on
+              224.5.23.2:10020 (what the compose vision-client actually
+              listens on) and ran `python -m tbots.apps.viz_rsim --realtime
+              --seconds 2 --port 10020`. Listener received 655 packets and
+              decoded at least one detection frame with a 6-robot team --
+              confirmed our own rSim traffic, not just the ER-Force
+              container's idle broadcast, is reaching that port.
+Deviations:   Root cause, empirically confirmed: `apps/viz_rsim.py`
+              constructed `VisionPublisher(geometry=DIV_B)` with no port,
+              so it always used VisionPublisher's SETUP.md-transcribed
+              default of 10006. The docker-compose vision-client listens on
+              10020 (it shares the ER-Force simulator container's port).
+              Result: the README's own documented quick start --
+              `docker compose up -d` then `python -m tbots.apps.viz_rsim
+              --realtime` -- rendered nothing, silently, on this stack.
+              This is the same gap Step 13/14 logged and explicitly left
+              unfixed pending a human decision.
+
+              Fix, on human instruction (2026-08-10): added a `--port`
+              CLI argument to viz_rsim.py, default unchanged at 10006 (so
+              VisionPublisher's own default and the macOS native-binary
+              workflow in Step 16 -- native ssl-vision-client on 10006 --
+              are both untouched). README's quick start now passes
+              `--port 10020` explicitly, since `docker compose up -d` only
+              ever appears in the Linux/WSL2 path (docker-compose.yml's own
+              header says it does not work on macOS at all). Did not touch
+              VisionPublisher's own default or its constructor signature --
+              that stays exactly as SETUP.md Step 10.3 transcribes it; only
+              the app-layer call site changed.
+Notes:        The real fix is still the config loader reading
+              configs/net/dev.yaml's `vision.port: 10020` -- that's fall
+              TASK work, not touched here. This is a stopgap that makes the
+              documented command line actually work today.
+
+## Post-Step-16 — full readiness audit + ONBOARDING.md correction pass   [PASS]
+Verification: `make lint` (ruff + mypy on core) and `make test` clean before
+              and after. Every TASK-0xx stub file on the board (31 IDs)
+              confirmed present with `NotImplementedError`/`pass` bodies,
+              none accidentally implemented, none missing. `go_to_point.py`
+              confirmed as the one deliberately-real skill (SETUP.md 11.2's
+              reference implementation), not a gap. All five configs/*.yaml
+              parse. `viz_rsim.py --seconds 3` and full `docker compose
+              down && up -d && sleep 5 && ps` re-run clean, no restart
+              loops.
+Deviations:   docs/ONBOARDING.md had six confirmed-wrong or confirmed-broken
+              claims, found by actually running what it says to run rather
+              than reading it:
+              1. Header said "Ubuntu 22.04 / WSL2" -- SETUP.md's own Step 1
+                 was already corrected to 24.04; ONBOARDING never was.
+              2. `docker-compose-plugin` -- not in Ubuntu's repos on any
+                 release (SETUP.md Step 1.2 already says this); should be
+                 `docker-compose-v2`. Fixed to match.
+              3. The verify block was missing `pkg-config --variable=libdir
+                 ode` entirely -- the check CLAUDE.md calls "not optional on
+                 Ubuntu 24.04" and SETUP.md's own Step 1.4 calls "the single
+                 most valuable check in the whole setup". Without it,
+                 ONBOARDING's own two remaining checks (version string,
+                 dDOUBLE grep) both pass against noble's packaged libode-dev
+                 -- same version number as ours, wrong build -- so a recruit
+                 following ONBOARDING literally could build rSim against the
+                 wrong ODE and get wrong physics with a fully green verify
+                 block. Added the check and rewrote the surrounding
+                 paragraph, which had called this "the wrong version" -- it
+                 isn't; the version string is identical, that's the whole
+                 trap.
+              4. Repo clone URL was `github.com/tritonbots/tritonbots`, the
+                 placeholder CLAUDE.md section 2 explicitly warns 404s.
+                 Fixed to `github.com/YashTandon05/tritonbots`.
+              5. The protobuf import verify line was
+                 `tbots._pb.ssl_gc_referee_message_pb2` -- confirmed by
+                 running it, this raises `ModuleNotFoundError`. The real
+                 path, `tbots._pb.state.ssl_gc_referee_message_pb2`, was
+                 already fixed in SETUP.md itself by an earlier commit
+                 (30d34a5) that never touched ONBOARDING's copy.
+              6. 1.4's Linux/WSL2 `viz_rsim` command had no `--port`, so it
+                 hits the same 10006-vs-10020 mismatch just fixed above.
+                 Updated 1.4, the cheat sheet, and configs/net/dev.yaml's
+                 comment to reference `--port 10020`.
+
+              Beyond fixed bugs, two structural problems, addressed with a
+              status note rather than code (implementing either is out of
+              CLAUDE.md scope -- TASK-056 is explicitly recruit work, and
+              apps/eval.py isn't even on the task board, so building it
+              would be inventing scope, not doing recruit work early):
+              - `rl/train.py` is TASK-056, a real `NotImplementedError`
+                stub. ONBOARDING Part 1.6/1.7 presented it as something a
+                new recruit runs successfully on day one.
+              - `apps/eval.py`, referenced 4 times across 1.6/1.7/cheat
+                sheet, does not exist anywhere in the tree AND is not on
+                SETUP.md's task board under any ID -- it was never planned
+                as a tracked deliverable, just assumed into existence by
+                ONBOARDING's prose. Flagged prominently (status banner at
+                the top, inline note at 1.6, cheat-sheet annotations)
+                instead of silently fixed, since creating it is a scope
+                decision for a human, not a doc-fidelity fix.
+
+              Minor: `uv pip install -e third_party/rsoccer --no-deps` in
+              1.2 never followed up with the second plain install SETUP.md
+              Step 5 uses to pick up rsoccer's remaining deps (pygame etc).
+              Since our fork already has the rc-robosim pin permanently
+              removed (Step 5 log, committed b9a0a63), a plain
+              `uv pip install -e third_party/rsoccer` with no `--no-deps`
+              is now sufficient and simpler for a fresh clone -- confirmed
+              pygame installs correctly in the current venv either way.
+              Simplified to that single line.
+
+              `ScriptedDefense()` in Part 3's self-play section renamed to
+              `ScriptedTactic()` -- the real class name in
+              tactics/scripted.py (TASK-041).
+Notes:        Nothing above Step 16 (the actually-built simulator/backend/
+              network layers) needed a code change in this pass -- only
+              viz_rsim.py's call site, already covered above. Everything
+              here is a documentation-accuracy pass on ONBOARDING.md, which
+              CLAUDE.md designates reference-only / describes-the-end-state.
+              The status banner keeps that framing intact rather than
+              rewriting the doc to only describe today: 1.6 onward stays
+              written for the finished system, now clearly labeled as such.
