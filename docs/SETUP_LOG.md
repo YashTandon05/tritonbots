@@ -948,3 +948,80 @@ Notes:        Nothing above Step 16 (the actually-built simulator/backend/
               The status banner keeps that framing intact rather than
               rewriting the doc to only describe today: 1.6 onward stays
               written for the finished system, now clearly labeled as such.
+
+## Step 1 (addendum) — how ODE was actually installed, and doc corrections   [PASS]
+Verification: All five documented checks re-run on this machine:
+              `pkg-config --modversion ode`                -> 0.16.2
+              `pkg-config --variable=libdir ode`           -> /usr/local/lib
+              `ldd /usr/local/lib/libode.so.8 | grep libccd`
+                                                           -> libccd.so.2 => /lib/x86_64-linux-gnu/libccd.so.2
+              `dGetConfiguration()` via ctypes             -> "ODE ODE_EXT_no_debug
+                 ODE_EXT_trimesh ODE_EXT_opcode ODE_OPC_new_collider
+                 ODE_EXT_threading ODE_THR_builtin_impl ODE_double_precision"
+              `ldd $(python -c 'import robosim._robosim as m; print(m.__file__)')`
+                                                           -> libode.so.8 => /usr/local/lib/libode.so.8
+
+              The installed ODE is correct. Double precision is confirmed from
+              the compiled library itself, not just from precision.h. The
+              packaged libode-dev/libode8t64 are absent (no /usr/include/ode,
+              no /usr/lib/x86_64-linux-gnu/libode*), so nothing shadows it.
+
+Deviations:   The human's actual install path differed from SETUP.md 1.4 and
+              was recovered from fish history. The tarball step was attempted
+              first and abandoned; the build that succeeded was:
+
+                sudo apt-get remove libode-dev libode8t64
+                sudo apt install -y build-essential autoconf automake libtool libccd-dev
+                git clone https://bitbucket.org/odedevs/ode.git && cd ode
+                git checkout 0.16.2        # NOT "ode-0.16.2" -- that tag does not exist
+                autoreconf -fi             # git tree ships no ./configure
+                ./configure --enable-double-precision --with-box-cylinder=libccd \
+                            --enable-libccd --enable-shared --disable-demos --disable-asserts
+                make -j"$(nproc)" && sudo make install && sudo ldconfig
+
+              Three findings from reproducing this, each now written into
+              docs/SETUP.md Step 1 and docs/ONBOARDING.md:
+
+              1. `libccd-dev` was missing from the apt list in BOTH docs, and
+                 it is load-bearing. ODE's `--with-libccd` defaults to
+                 `system`, but when no system libccd is present configure
+                 falls back to the bundled copy and STILL EXITS 0. Verified
+                 by re-running configure with PKG_CONFIG_LIBDIR pointed at an
+                 empty directory: "libccd source: internal", exit 0. Also
+                 verified that passing `--with-libccd=system` explicitly does
+                 NOT turn this into an error -- it falls back identically.
+                 There is no flag that makes it fail, so the only defenses are
+                 installing libccd-dev and checking afterwards. Our build is
+                 system libccd (undefined ccd symbols in libode.so, runtime
+                 link to Ubuntu libccd2 2.1, which is CCD_DOUBLE -- matches
+                 ODE's double precision, no mismatch).
+
+              2. The bitbucket tarball URL in both docs is NOT dead. Re-tested
+                 today: HTTP 200, 2,627,992 bytes, and the exact ./configure
+                 line from ONBOARDING.md runs clean (exit 0) against the
+                 extracted tree with the same feature summary as the installed
+                 library. Why the human's first attempt failed could not be
+                 determined from history and is not recorded as a doc defect.
+                 The git route is documented as a fallback only, with its two
+                 real gotchas (tag is `0.16.2`; `autoreconf -fi` required).
+
+              3. `ldd "$(python -c 'import robosim; print(robosim.__file__)')"`
+                 in SETUP.md Step 1.4 and the troubleshooting appendix cannot
+                 work -- `robosim.__file__` is the package `__init__.py` and
+                 ldd on a .py file reports nothing useful. Corrected to
+                 `robosim._robosim`, the compiled extension that actually
+                 carries the ODE dependency.
+
+              Also corrected, same root cause: SETUP.md Step 17.1's Apptainer
+              recipe and Step 16's GitHub Actions job both built ODE without
+              libccd-dev, so CI and the cluster container would have silently
+              used internal libccd while developer machines used system --
+              a physics divergence that no test would have caught. Added to
+              both, and bumped the Actions ODE cache key to
+              `ode-0.16.2-double-sysccd` so the stale cached library is not
+              restored over the corrected build.
+
+Notes:        No system state was changed by this pass -- verification and
+              documentation only. The two throwaway configure runs used to
+              prove the silent-fallback behaviour were done in the scratchpad
+              against a freshly downloaded tarball, never installed.

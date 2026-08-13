@@ -134,6 +134,7 @@ sudo apt-get update
 sudo apt-get install -y \
   build-essential cmake pkg-config git curl wget unzip \
   autoconf automake libtool \
+  libccd-dev \
   python3-dev python3-venv \
   libgl1-mesa-dev libglu1-mesa-dev freeglut3-dev libsdl2-dev \
   protobuf-compiler
@@ -146,7 +147,17 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
 ```
 
-Now ODE 0.16.2 — **the step most likely to fail, and the one most likely to fail silently.** Ubuntu 24.04's packaged `libode-dev` **is also version 0.16.2** — the version string matches ours exactly — but it is not built with the flags rSim needs (double precision, libccd collision). A version check alone will pass against it and rSim will then compile, import, and run cleanly while producing wrong physics. Build from source, and use all three verify commands below, not just the first:
+Now ODE 0.16.2 — **the step most likely to fail, and the one most likely to fail silently.** Ubuntu 24.04's packaged `libode-dev` **is also version 0.16.2** — the version string matches ours exactly — but it is not built with the flags rSim needs (double precision, libccd collision). A version check alone will pass against it and rSim will then compile, import, and run cleanly while producing wrong physics.
+
+**Remove the packaged one first.** If you skip this, everything below still
+appears to work and you end up linking the wrong library:
+
+```bash
+sudo apt-get remove -y libode-dev libode8t64
+pkg-config --modversion ode          # must now fail with "not found"
+```
+
+Then build from source:
 
 ```bash
 cd /tmp
@@ -161,20 +172,68 @@ echo 'export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-**Verify — all four must succeed:**
+> **`libccd-dev` is why it is in the apt list above, and it is load-bearing.**
+> `configure` looks for a system libccd and, **if it does not find one, quietly
+> uses ODE's bundled copy instead and still exits 0.** There is no flag that
+> turns this into an error — passing `--with-libccd=system` explicitly does
+> *not* help, it falls back just the same. The only signal is one line in the
+> `configure` summary:
+>
+> ```
+>   Use libccd:              yes
+>   libccd source:           system      <-- must say system, not internal
+> ```
+>
+> Our reference build uses **system** libccd. If yours says `internal`, install
+> `libccd-dev` and rebuild from a clean tree — the verify block below catches
+> this too.
+
+<details>
+<summary><b>If the bitbucket download is unavailable</b> — build from the git tag instead</summary>
+
+The tarball is served through a signed S3 redirect and some networks block or
+throttle it. The git repository is equivalent, with two gotchas:
+
+```bash
+cd /tmp
+git clone https://bitbucket.org/odedevs/ode.git && cd ode
+git checkout 0.16.2        # the tag is "0.16.2" — NOT "ode-0.16.2"
+autoreconf -fi             # the git tree ships no ./configure; generate it
+```
+
+Then run the same `./configure … && make && sudo make install && sudo ldconfig`
+as above. `autoreconf -fi` is what `autoconf automake libtool` are in the apt
+list for.
+
+</details>
+
+**Verify — all five must succeed:**
 
 ```bash
 pkg-config --modversion ode          # must print exactly: 0.16.2
 pkg-config --variable=libdir ode     # MUST print /usr/local/lib
-grep dDOUBLE /usr/local/include/ode/precision.h   # must find it
+ldd /usr/local/lib/libode.so.8 | grep libccd    # MUST print libccd.so.2
+python3 -c "import ctypes; l=ctypes.CDLL('/usr/local/lib/libode.so.8'); \
+  l.dGetConfiguration.restype=ctypes.c_char_p; print(l.dGetConfiguration().decode())"
 docker run --rm hello-world          # must print "Hello from Docker!"
 ```
 
+The fourth line is the one that actually settles it. It asks the compiled
+library what it is, rather than trusting a header or a `.pc` file that a later
+build could have left behind. It must contain **`ODE_double_precision`**:
+
+```
+ODE ODE_EXT_no_debug ODE_EXT_trimesh ODE_EXT_opcode ODE_OPC_new_collider
+ODE_EXT_threading ODE_THR_builtin_impl ODE_double_precision
+```
+
 **The second line is not optional.** If it prints `/usr/lib/x86_64-linux-gnu`
-instead of `/usr/local/lib`, you are still resolving to the packaged ODE —
-go back and remove `libode-dev`/`libode8t64` first (`sudo apt-get remove
-libode-dev libode8t64`), confirm `pkg-config --modversion ode` fails with
-"not found", then rebuild from source above.
+instead of `/usr/local/lib`, you are still resolving to the packaged ODE — go
+back to the `apt-get remove` above and then rebuild from source.
+
+**The third line is not optional either.** If `ldd` prints nothing, your ODE
+was built against the bundled libccd rather than the system one (see the note
+above) and your collision behaviour will not match everyone else's.
 
 </details>
 
@@ -190,7 +249,7 @@ xcode-select --install     # click through; skip if already installed
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 eval "$(/opt/homebrew/bin/brew shellenv)"   # Apple Silicon; Intel: /usr/local
 
-brew install cmake pkg-config autoconf automake libtool git curl wget protobuf python@3.11
+brew install cmake pkg-config autoconf automake libtool libccd git curl wget protobuf python@3.11
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
 ```
@@ -212,6 +271,14 @@ echo 'export DYLD_LIBRARY_PATH="$(brew --prefix)/lib:$DYLD_LIBRARY_PATH"' >> ~/.
 source ~/.zshrc
 ```
 
+> **Watch the `configure` summary for `libccd source: system`,** exactly as on
+> Linux — the silent fallback to ODE's bundled copy behaves the same way here.
+> That is what `brew install libccd` in the list above is for.
+
+If the bitbucket download is unavailable, the git route works on macOS too —
+`git clone https://bitbucket.org/odedevs/ode.git`, `git checkout 0.16.2` (the
+tag has no `ode-` prefix), then `autoreconf -fi` to generate `./configure`.
+
 **Now the macOS-specific step nothing else warns you about.** macOS does not route multicast to the loopback interface by default. Without this route, the referee and visualizer will silently receive nothing, with no error message anywhere:
 
 ```bash
@@ -229,10 +296,15 @@ echo 'alias tbots-net="sudo route -n add -net 224.0.0.0/4 -interface lo0 2>/dev/
 
 ```bash
 pkg-config --modversion ode                          # exactly 0.16.2
-grep dDOUBLE "$(brew --prefix)/include/ode/precision.h"
+otool -L "$(brew --prefix)/lib/libode.dylib" | grep ccd   # must show libccd
+python3 -c "import ctypes; l=ctypes.CDLL('$(brew --prefix)/lib/libode.dylib'); \
+  l.dGetConfiguration.restype=ctypes.c_char_p; print(l.dGetConfiguration().decode())"
 file "$(brew --prefix)/lib/libode.dylib"             # arm64 on M-series
 python3 -c "import platform; print(platform.machine())"   # must MATCH the line above
 ```
+
+The third line must contain **`ODE_double_precision`** — it asks the compiled
+library what it is, which no header or `.pc` file can tell you reliably.
 
 > **If the last two disagree**, you have a Rosetta-contaminated toolchain — an x86_64 Python trying to load an arm64 library, or vice versa. Nothing will work and the errors will not tell you why. Reinstall Homebrew natively and redo this section.
 

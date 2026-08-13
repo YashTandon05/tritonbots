@@ -126,11 +126,16 @@ sudo apt-get update
 sudo apt-get install -y \
   build-essential cmake pkg-config git curl wget unzip \
   autoconf automake libtool \
+  libccd-dev \
   python3-dev python3-venv \
   libgl1-mesa-dev libglu1-mesa-dev freeglut3-dev \
   libsdl2-dev \
   protobuf-compiler
 ```
+
+> **`libccd-dev` was missing from the draft of this list and is load-bearing.**
+> Step 1.4 builds ODE with `--enable-libccd`; without a system libccd present,
+> `configure` silently substitutes ODE's bundled copy. See the note in 1.4.
 
 **Verify:**
 
@@ -241,11 +246,57 @@ sudo make install
 sudo ldconfig
 ```
 
+> ### ⚠️ Watch the `configure` summary for the libccd source
+>
+> `--enable-libccd` makes ODE *use* libccd colliders; `--with-libccd` chooses
+> *which* libccd, and defaults to `system`. **If no system libccd is
+> installed, `configure` falls back to ODE's bundled copy and still exits 0.**
+> There is no flag that turns this into an error — passing
+> `--with-libccd=system` explicitly does not help, it falls back just the same
+> (verified). The only signal is two lines near the end of `configure`:
+>
+> ```
+>   Use libccd:              yes
+>   libccd source:           system      <-- must say system, not internal
+> ```
+>
+> Our reference build is **system** libccd (Ubuntu `libccd2` 2.1, double
+> precision). If yours says `internal`, `sudo apt-get install libccd-dev` and
+> rebuild from a clean tree.
+
+> ### If the bitbucket tarball is unavailable
+>
+> It is served through a signed S3 redirect and some networks block it. The
+> git repository is equivalent, with two gotchas:
+>
+> ```bash
+> cd /tmp
+> git clone https://bitbucket.org/odedevs/ode.git && cd ode
+> git checkout 0.16.2      # the tag is "0.16.2" — there is no "ode-0.16.2"
+> autoreconf -fi           # the git tree ships no ./configure; generate it
+> ```
+>
+> Then run the same `./configure … && make && sudo make install && sudo
+> ldconfig`. This is what `autoconf automake libtool` are in the 1.1 list for.
+
 **Verify:**
 
 ```bash
 pkg-config --modversion ode
 pkg-config --variable=libdir ode
+ldd /usr/local/lib/libode.so.8 | grep libccd
+python3 -c "import ctypes; l=ctypes.CDLL('/usr/local/lib/libode.so.8'); \
+  l.dGetConfiguration.restype=ctypes.c_char_p; print(l.dGetConfiguration().decode())"
+```
+
+The third must print a `libccd.so.2` line — if it prints nothing, you got the
+bundled libccd (see the note above). The fourth asks the compiled library what
+it is, rather than trusting a header or a `.pc` file some other build could
+have left behind, and must contain `ODE_double_precision`:
+
+```
+ODE ODE_EXT_no_debug ODE_EXT_trimesh ODE_EXT_opcode ODE_OPC_new_collider
+ODE_EXT_threading ODE_THR_builtin_impl ODE_double_precision
 ```
 
 The first must print `0.16.2`. **The second must print `/usr/local/lib`** —
@@ -281,8 +332,12 @@ ldconfig -p | grep libode
 entry should. After Step 4 builds rSim, re-check the binding itself:
 
 ```bash
-ldd "$(python -c 'import robosim; print(robosim.__file__)')" | grep -i ode
+ldd "$(python -c 'import robosim._robosim as m; print(m.__file__)')" | grep -i ode
 ```
+
+Note `robosim._robosim`, not `robosim`. The latter is the package
+`__init__.py`, and `ldd` on a `.py` file tells you nothing; the compiled
+extension module is what actually carries the ODE dependency.
 
 It must resolve to `/usr/local/lib/libode.so`. This is the single most
 valuable check in the whole setup — it is what separates "rSim imports"
@@ -3545,14 +3600,16 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake autoconf automake libtool
+          sudo apt-get install -y build-essential cmake autoconf automake libtool libccd-dev
 
       - name: Cache ODE
         id: ode-cache
         uses: actions/cache@v4
         with:
           path: /usr/local/lib/libode*
-          key: ode-0.16.2-double
+          # Bump this key whenever the ODE configure flags change, or CI will
+          # restore a stale library built with different physics settings.
+          key: ode-0.16.2-double-sysccd
 
       - name: Build ODE
         if: steps.ode-cache.outputs.cache-hit != 'true'
@@ -3692,9 +3749,11 @@ From: ubuntu:24.04
     export DEBIAN_FRONTEND=noninteractive
     apt-get update && apt-get install -y \
         build-essential cmake pkg-config git curl wget ca-certificates \
-        autoconf automake libtool
+        autoconf automake libtool libccd-dev
 
     # ODE 0.16.2, double precision, libccd
+    # libccd-dev above is required: without it configure silently uses ODE's
+    # bundled libccd and the container's physics diverges from developers'.
     cd /tmp
     wget -q https://bitbucket.org/odedevs/ode/downloads/ode-0.16.2.tar.gz
     tar -xzf ode-0.16.2.tar.gz && cd ode-0.16.2
@@ -3865,7 +3924,8 @@ All three must agree (`arm64` on M-series, `x86_64` on Intel). If they do not, y
 The single most important 24.04 gotcha. Noble's packaged `libode-dev` *is*
 0.16.2, so the version check passes while resolving to Debian's build rather
 than ours. Diagnose with `pkg-config --variable=libdir ode` (must be
-`/usr/local/lib`) and `ldd "$(python -c 'import robosim; print(robosim.__file__)')" | grep ode`.
+`/usr/local/lib`) and
+`ldd "$(python -c 'import robosim._robosim as m; print(m.__file__)')" | grep ode`.
 Fix per the warning in Step 1.4.
 
 **`E: Unable to locate package docker-compose-plugin`.**
