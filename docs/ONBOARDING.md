@@ -141,11 +141,33 @@ sudo apt-get install -y \
 
 sudo apt-get install -y docker.io docker-compose-v2
 sudo usermod -aG docker "$USER"
-newgrp docker
+```
 
+> **`newgrp docker` used to be right here — it isn't anymore, on purpose.**
+> `newgrp` opens a *new subshell*, and if you paste the rest of this section
+> as one block, every line after it runs inside that subshell instead of
+> your original terminal. Exit (or close) that subshell later and you're
+> back in a shell where none of it — `uv`, its `PATH` export, anything —
+> ever happened, with no error to tell you so. Run `newgrp docker` (or just
+> open a fresh terminal) **after** you finish this whole section, right
+> before the `docker run --rm hello-world` check below.
+
+```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
 ```
+
+**Verify uv landed before going any further:**
+
+```bash
+uv --version                         # must print a version, e.g. uv 0.12.5
+```
+
+If this prints `command not found`, `~/.local/bin` was never created — the
+install step above didn't actually run (a closed terminal, an interrupted
+paste, a `sudo` prompt that ate the rest of the block — `newgrp docker` used
+to be a common cause of exactly this, see above). Re-run the two `curl`/
+`source` lines directly, not as part of a larger paste, then re-check.
 
 Now ODE 0.16.2 — **the step most likely to fail, and the one most likely to fail silently.** Ubuntu 24.04's packaged `libode-dev` **is also version 0.16.2** — the version string matches ours exactly — but it is not built with the flags rSim needs (double precision, libccd collision). A version check alone will pass against it and rSim will then compile, import, and run cleanly while producing wrong physics.
 
@@ -215,8 +237,20 @@ pkg-config --variable=libdir ode     # MUST print /usr/local/lib
 ldd /usr/local/lib/libode.so.8 | grep libccd    # MUST print libccd.so.2
 python3 -c "import ctypes; l=ctypes.CDLL('/usr/local/lib/libode.so.8'); \
   l.dGetConfiguration.restype=ctypes.c_char_p; print(l.dGetConfiguration().decode())"
-docker run --rm hello-world          # must print "Hello from Docker!"
+sg docker -c "docker run --rm hello-world"    # must print "Hello from Docker!"
 ```
+
+> **Why `sg docker -c "..."` and not `newgrp docker`.** `newgrp` doesn't run
+> a command and return — it *replaces your shell* with a new interactive one
+> and sits there. Paste it in the middle of a multi-line block and every
+> line after it either gets swallowed by that new subshell with no visible
+> output, or never reaches it at all, depending on your terminal. `sg docker
+> -c "cmd"` runs one command with the `docker` group applied and hands
+> control straight back — safe to paste, no subshell left behind. If you
+> still see `permission denied` after this, `usermod -aG docker "$USER"`
+> either didn't run or didn't stick — open a **brand new terminal window**
+> (not `newgrp`) and try `docker run --rm hello-world` plain; a fresh login
+> shell picks up group membership on its own.
 
 The fourth line is the one that actually settles it. It asks the compiled
 library what it is, rather than trusting a header or a `.pc` file that a later
@@ -323,6 +357,18 @@ cd tritonbots
 ```
 
 > **Forgot `--recurse-submodules`?** Fix it with `git submodule update --init --recursive`. You will know you forgot because `protos/` and `third_party/` will be empty directories and Step 1.3 will fail immediately.
+
+```bash
+uv --version || echo "uv not found — rerun the uv install in 1.1"
+```
+
+You do **not** need to install Python 3.11 yourself — there is no
+`apt install python3.11` or `python3.11` PPA anywhere in this doc, and
+that's intentional. Ubuntu 24.04 ships Python 3.12, and 3.11 isn't in its
+repositories at all; `uv venv --python 3.11` below downloads a standalone
+CPython 3.11 (headers included) the first time it's asked for it, and rSim
+compiles against that copy. If `uv --version` above worked, you already have
+everything you need for this step.
 
 ```bash
 uv venv --python 3.11
