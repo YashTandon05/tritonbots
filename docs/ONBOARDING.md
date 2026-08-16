@@ -179,12 +179,17 @@ sudo apt-get remove -y libode-dev libode8t64
 pkg-config --modversion ode          # must now fail with "not found"
 ```
 
-Then build from source:
+Then build from source. **Clone the git repo — do not use the bitbucket
+tarball download link.** The tarball is served through a signed S3 redirect
+that has been unreliable in practice; the git clone below is the version that
+actually works, with no download errors:
 
 ```bash
 cd /tmp
-wget https://bitbucket.org/odedevs/ode/downloads/ode-0.16.2.tar.gz
-tar -xzf ode-0.16.2.tar.gz && cd ode-0.16.2
+git clone https://bitbucket.org/odedevs/ode.git && cd ode
+git checkout 0.16.2        # the tag is "0.16.2" — NOT "ode-0.16.2"
+autoreconf -fi             # the git tree ships no ./configure; generate it
+
 ./configure --enable-double-precision --with-box-cylinder=libccd \
             --enable-libccd --enable-shared --disable-demos --disable-asserts
 make -j"$(nproc)" && sudo make install && sudo ldconfig
@@ -193,6 +198,18 @@ echo 'export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH' >> ~/.ba
 echo 'export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 source ~/.bashrc
 ```
+
+Two things about this that are easy to get wrong:
+
+- **The tag is `0.16.2`, not `ode-0.16.2`.** The bitbucket *download* filename
+  (`ode-0.16.2.tar.gz`) has the `ode-` prefix; the git tag does not.
+  `git checkout ode-0.16.2` fails with "did not match any file(s) known to
+  git" — if you see that, drop the prefix.
+- **`autoreconf -fi` is required and easy to skip.** The git tree, unlike the
+  release tarball, does not ship a generated `./configure` script — only the
+  `configure.ac`/`Makefile.am` sources. Skipping this step means `./configure`
+  below fails with `No such file or directory`. This is what
+  `autoconf automake libtool` are in the apt list above for.
 
 > **`libccd-dev` is why it is in the apt list above, and it is load-bearing.**
 > `configure` looks for a system libccd and, **if it does not find one, quietly
@@ -209,25 +226,6 @@ source ~/.bashrc
 > Our reference build uses **system** libccd. If yours says `internal`, install
 > `libccd-dev` and rebuild from a clean tree — the verify block below catches
 > this too.
-
-<details>
-<summary><b>If the bitbucket download is unavailable</b> — build from the git tag instead</summary>
-
-The tarball is served through a signed S3 redirect and some networks block or
-throttle it. The git repository is equivalent, with two gotchas:
-
-```bash
-cd /tmp
-git clone https://bitbucket.org/odedevs/ode.git && cd ode
-git checkout 0.16.2        # the tag is "0.16.2" — NOT "ode-0.16.2"
-autoreconf -fi             # the git tree ships no ./configure; generate it
-```
-
-Then run the same `./configure … && make && sudo make install && sudo ldconfig`
-as above. `autoreconf -fi` is what `autoconf automake libtool` are in the apt
-list for.
-
-</details>
 
 **Verify — all five must succeed:**
 
@@ -288,13 +286,18 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
 ```
 
-**Do not `brew install ode`** — wrong version, wrong flags. Build it:
+**Do not `brew install ode`** — wrong version, wrong flags. Build it. **Clone
+the git repo — do not use the bitbucket tarball download link**, same reason
+as the Linux/WSL2 section above: that download goes through a signed S3
+redirect that has been unreliable, where the git clone is not.
 
 ```bash
 export BREW_PREFIX="$(brew --prefix)"
 cd /tmp
-curl -LO https://bitbucket.org/odedevs/ode/downloads/ode-0.16.2.tar.gz
-tar -xzf ode-0.16.2.tar.gz && cd ode-0.16.2
+git clone https://bitbucket.org/odedevs/ode.git && cd ode
+git checkout 0.16.2        # the tag is "0.16.2" — NOT "ode-0.16.2"
+autoreconf -fi             # the git tree ships no ./configure; generate it
+
 ./configure --prefix="$BREW_PREFIX" \
             --enable-double-precision --with-box-cylinder=libccd \
             --enable-libccd --enable-shared --disable-demos --disable-asserts
@@ -308,10 +311,6 @@ source ~/.zshrc
 > **Watch the `configure` summary for `libccd source: system`,** exactly as on
 > Linux — the silent fallback to ODE's bundled copy behaves the same way here.
 > That is what `brew install libccd` in the list above is for.
-
-If the bitbucket download is unavailable, the git route works on macOS too —
-`git clone https://bitbucket.org/odedevs/ode.git`, `git checkout 0.16.2` (the
-tag has no `ode-` prefix), then `autoreconf -fi` to generate `./configure`.
 
 **Now the macOS-specific step nothing else warns you about.** macOS does not route multicast to the loopback interface by default. Without this route, the referee and visualizer will silently receive nothing, with no error message anywhere:
 
