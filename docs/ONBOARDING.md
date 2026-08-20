@@ -826,32 +826,133 @@ Hydra lets you override any config key from the command line with dots: `train.n
 
 ## Training on the cluster
 
-Local training is for iterating on a reward function. Real runs go to the cluster.
+Local training (§1.6) is for iterating on a reward function. Real runs go to **Atlantis**, the UCSD Supercomputing Club's SDSC-hosted cluster. Everyone on the team works out of **one shared checkout** at `/projects/robocup/tritonbots` — not individual clones. The expensive, slow-to-build parts (ODE, libccd, the download cache, and the generated protobuf bindings) already exist there and are shared by everyone automatically. **Your Python venv is the one thing that can't be shared** — see below before you do anything else.
 
-Three things about HPC that catch everyone:
+### First time on Atlantis? Build your own venv
 
-1. **Most clusters ban Docker.** We use Apptainer (formerly Singularity).
-2. **Compute nodes have no internet.** Weights & Biases runs offline and syncs from the login node afterwards.
-3. **Walltime limits will kill your run.** Always pass `train.resume_from` — the trainer picks up where it left off.
+`uv venv --python 3.11` installs the actual Python 3.11 interpreter into *your own* `~/.local/share/uv/python/`, and `.venv/bin/python3` is a symlink into that personal path. HPC home directories are private (`700`), so a venv built by one teammate is a dead symlink for everyone else in this shared checkout — there's no way to reuse someone else's `.venv` here. Everyone builds their own, named so they don't collide with each other:
 
 ```bash
-# once, on a machine where you have fakeroot
-apptainer build --fakeroot ssl-train.sif containers/train.def
+cd /projects/robocup/tritonbots
+source env-atlantis.sh                        # already in this checkout, points at the shared ODE/libccd build
+uv venv --python 3.11 ".venv-$USER"
+source ".venv-$USER/bin/activate"
+uv pip install -e ".[dev,train]"
+cd third_party/rsim && uv pip install -e . && cd ../..
+cd third_party/rsoccer && uv pip install -e . --no-deps && uv pip install -e . && cd ../..
+```
 
-# submit
-REWARD=approach sbatch scripts/train.slurm
+This is still fast despite being per-person, because the two genuinely expensive things are already shared and get reused automatically:
+- `TB_PREFIX=/projects/robocup/tbots-local` — the compiled ODE 0.16.2 + libccd 2.0. Your build links against it instead of recompiling it.
+- `UV_CACHE_DIR=/projects/robocup/tbots-local/uv-cache` (set in `env-atlantis.sh`) — already warm with `torch`'s CUDA wheels and everything else in `pyproject.toml`. `uv pip install` hits this cache instead of re-downloading gigabytes.
 
-# check on it
+Only the interpreter itself (~30MB) and the rSim/rSoccer C++ extension compile (1–3 minutes, per `docs/SETUP.md` §4.4) are genuinely per-person work. You do **not** need to run `make proto` — `src/tbots/_pb/` is generated once into the shared checkout, and every venv sees the same files on disk regardless of who generated them.
+
+**Verify** before doing anything else:
+```bash
+python -c "import robosim, torch; print('rsim ok, torch', torch.__version__, torch.cuda.is_available())"
+ldd "$(python -c 'import robosim._robosim as m; print(m.__file__)')" | grep -i ode
+# must resolve to $TB_PREFIX/lib/libode.so.8, not any other ODE
+```
+
+You should also be listed under the `robocup` SLURM account (`sacctmgr show associations user=$USER format=account -p`) and in the `cf-robocup` Unix group (`groups`) — both gate cluster/filesystem access independently of the venv. If either is missing, that's an Atlantis admin request.
+
+One shared-checkout hazard worth naming since it's real with multiple people in one working tree: coordinate before `git pull`/`checkout`/`reset` if you have uncommitted changes, and don't assume a file you're editing isn't also open in someone else's terminal.
+
+### Load the environment (every session after the first)
+
+```bash
+cd /projects/robocup/tritonbots
+source env-atlantis.sh
+source ".venv-$USER/bin/activate"
+```
+`env-atlantis.sh` points `PKG_CONFIG_PATH`/`LD_LIBRARY_PATH`/`CMAKE_PREFIX_PATH` at `/projects/robocup/tbots-local` — the shared user-space install of ODE 0.16.2 and libccd 2.0 (double precision). There's no sudo on this cluster, so there's no `/usr/local` the way `docs/SETUP.md` Step 1.4 describes on a dev box; this prefix is the substitute. It also loads the `gcc/13.4.0` and `cmake/3.31.11` Lmod modules rSim's build needs — `13.4.0` specifically, not the newer default, since that's the version already proven against the `<cstdint>` fix in our fork.
+
+Confirm it's alive:
+```bash
+python -c "import robosim, torch; print('rsim ok, torch', torch.__version__, torch.cuda.is_available())"
+```
+
+### SLURM basics on this cluster
+
+- `sinfo` — partitions and nodes.
+- `squeue -u $USER` — your jobs.
+- `module avail` — the Lmod/Spack tree (gcc, cmake, python, openmpi, plus separate NVIDIA and ROCm module trees for the two GPU families this cluster has).
+- **Every job needs an explicit account and partition.** Atlantis's job-submit plugin rejects anything missing `-A <account> -p <partition>` with a `scc_job_submit: ...` error — there is no default to fall back on. Our account is `robocup`.
+
+### GPU nodes
+
+```bash
+sinfo -N -o "%N %P %G"
+```
+As of this writing: `zixian` (`rtx2080ti:8`, NVIDIA Turing) is the node for policy training. Our `torch` build (`2.13.0+cu130`) targets a recent CUDA runtime — the cluster's older `gtx980ti` (Maxwell) and `p100` (Pascal) nodes are likely below the minimum compute capability that wheel supports, so don't request those for training without checking first. The `mi210` nodes are AMD/ROCm and need a separate ROCm build of `torch` to use at all — out of scope until we actually need AMD capacity.
+
+Interactive GPU session:
+```bash
+srun -A robocup -p debug --nodelist=zixian --gres=rtx2080ti:1 --cpus-per-task=4 --mem=16G --time=00:30:00 --pty bash
+```
+Gres syntax on this cluster is the bare GPU model name (`rtx2080ti:N`), not `gpu:rtx2080ti:N` — confirmed via `scontrol show node zixian`'s `Gres=` line. If you target a different node, re-check with the same command rather than assuming the syntax carries over.
+
+### Don't lose your session — use tmux
+
+Atlantis SSH connections can drop, and a bare `srun --pty bash` dies with them — it's a child of your SSH session, not something SLURM keeps alive independently. Start `tmux` on the login node *before* requesting resources:
+```bash
+tmux new -s train
+srun -A robocup -p debug --nodelist=zixian --gres=rtx2080ti:1 --pty bash
+```
+If you get disconnected, log back in and run `tmux attach -t train` — your shell, and everything inside it including the `srun` allocation, is still there. Without `tmux`, your only fallback is checking whether the job is still `RUNNING` via `squeue -u $USER` and trying `ssh <nodename>` directly — some SLURM configs adopt a fresh SSH session into your still-running job, but don't rely on that as your primary workflow; start the `tmux` first.
+
+### Benchmark before trusting any throughput number
+
+rSim never touches the GPU — it's single-threaded C++ physics (`docs/RSIM_FACTS.md`). The README's steps/s number was measured on the WSL2 dev box; Atlantis's CPUs are different hardware, so measure it here rather than assuming the number carries over:
+```bash
+python -m tbots.apps.viz_rsim --seconds 60 | tail -1
+```
+
+Atlantis, 6v6, 60 Hz, single process: ~250 steps/s
+
+### Launching a training run
+
+> **Not runnable yet.** Same caveat as §1.6 — `tbots.rl.train` (TASK-056) still raises `NotImplementedError`. The script below is Atlantis's equivalent of `docs/SETUP.md` §17.2's `scripts/train.slurm`, written in advance so it's ready the moment that command exists. It skips the Apptainer image entirely — there's no container runtime on this cluster — and runs directly inside the venv instead.
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=ssl-train
+#SBATCH -A robocup
+#SBATCH -p normal
+#SBATCH --gres=rtx2080ti:1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=64G
+#SBATCH --time=12:00:00
+#SBATCH --output=logs/%x-%j.out
+
+set -euo pipefail
+cd /projects/robocup/tritonbots
+source env-atlantis.sh
+source ".venv-$USER/bin/activate"
+export WANDB_MODE=offline
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
+RUN_DIR="runs/${SLURM_JOB_NAME}-${SLURM_JOB_ID}"
+mkdir -p "$RUN_DIR" logs
+python -m tbots.rl.train \
+  env=div_b_6v6 reward="${REWARD:-example}" \
+  train.num_envs=32 train.run_dir="$RUN_DIR" train.resume_from="${RUN_DIR}/latest.pt"
+```
+
+`OMP_NUM_THREADS=1`/`MKL_NUM_THREADS=1` matter for the same reason `docs/SETUP.md` §17.1 flags them: rSim parallelizes across processes, not threads, and PyTorch/BLAS spawning their own threads inside every one of those 32 workers will fight the same 32 cores for time and collapse throughput below single-process.
+
+Submit it, then check on it and sync the offline W&B run from the **login node**:
+```bash
+sbatch scripts/train_atlantis.slurm
 squeue -u "$USER"
 tail -f logs/ssl-train-*.out
-
-# after it finishes, from the LOGIN node
+# after it finishes:
 wandb sync wandb/offline-run-*
 ```
 
-**Throughput expectation:** rSim is single-threaded per instance, so we parallelise across *processes*, not on a GPU. A 64-core node with 128 environments lands somewhere in the 10⁴–10⁵ environment-steps/second range for 6v6. That is ample for skill training and for the tactics layer. It is not Isaac Gym, and we are not pretending otherwise.
-
-> **`OMP_NUM_THREADS=1` is set in the container and it is not decorative.** If PyTorch and BLAS each spawn threads inside all 128 workers, they fight over 64 cores and throughput collapses to below single-process. If your cluster run is slower than your laptop, this is why.
+> **Unverified — check before relying on it:** the offline-then-sync W&B pattern assumes Atlantis's compute nodes have no outbound internet, matching typical HPC policy and `docs/SETUP.md` Step 17's assumption. This hasn't specifically been confirmed on Atlantis. Quick check from a compute node: `curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 https://pypi.org`. If that returns `200`, compute nodes do have internet and you can likely skip the offline/sync dance — but confirm before assuming.
 
 ---
 
