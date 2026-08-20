@@ -43,6 +43,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 OUT="src/tbots/_pb"
+WELL_KNOWN_PROTO_DIR="$(python -c 'import grpc_tools, os; print(os.path.join(os.path.dirname(grpc_tools.__file__), "_proto"))')"
 
 GC_DIR="protos/ssl-game-controller/proto"
 SIM_DIR="protos/ssl-simulation-protocol/proto"
@@ -94,7 +95,7 @@ for spec in "GC:$GC_DIR:$GC_EXCLUDE" "SIM:$SIM_DIR:$SIM_EXCLUDE" "VIS:$VIS_DIR:$
   # this, `import ssl_gc_common_pb2` at the top of a generated module fails
   # with ModuleNotFoundError the moment the modules live inside a package.
   ( cd "$dir" && protol --create-package --in-place \
-      --python-out "$OLDPWD/$OUT" protoc --proto-path=. "${FILES[@]}" )
+      --python-out "$OLDPWD/$OUT" protoc --proto-path=. --proto-path="$WELL_KNOWN_PROTO_DIR" "${FILES[@]}" )
 done
 
 touch "$OUT/__init__.py"
