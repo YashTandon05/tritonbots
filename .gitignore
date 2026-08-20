@@ -33,3 +33,4 @@ wandb/
 # name, so ignore that whole family, not just the live file.
 tools/gc-config/state-store.json.stream
 tools/gc-config/*_state-store.json.stream
+env-atlantis.sh
