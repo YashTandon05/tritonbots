@@ -6,17 +6,20 @@
 
 **Time:** about 4 hours for Part 1. Parts 2 and 3 are your first and second weeks.
 
-> **Status as of 2026-08-10.** Sections 1.1–1.5 — install, build, watch rSim
+> **Status as of 2026-08-25.** Sections 1.1–1.5 — install, build, watch rSim
 > render in the browser, talk to the referee — work today, exactly as
 > written. **1.6 onward describe the finished system and are not runnable
 > yet.** `python -m tbots.rl.train` raises `NotImplementedError("TASK-056")`
-> on purpose — see `docs/SETUP.md`'s task board, which deliberately leaves
-> the RL/skills/tactics layers as recruit work. `tbots.apps.eval`, referenced
-> throughout 1.6, 1.7, and Part 2, does not exist in the repo at all yet and
-> is not currently on the task board either — that's a real gap, flag it to
-> whoever picks up TASK-056 so an eval app gets tracked and built alongside
-> it. Everything below is accurate about *what will exist*; treat 1.6+ as
-> a preview to read, not a command to run, until those land.
+> on purpose: the RL, skills, and tactics layers are deliberately left as
+> recruit work. `tbots.apps.eval`, referenced throughout 1.6, 1.7, and
+> Part 2, does not exist in the repo yet either — it is now tracked as
+> **TASK-058** alongside TASK-056. Everything below is accurate about *what
+> will exist*; treat 1.6+ as a preview to read, not a command to run, until
+> those land.
+>
+> **`docs/TASKS.md` is the live board** — current tiers, sizes, and a
+> "done when" gate for every open item. It replaces the board that used to
+> sit at the end of `docs/SETUP.md`.
 
 ---
 
@@ -669,7 +672,9 @@ The critical thing it demonstrates, which trips up everyone once: **`RobotComman
 
 ### Pick one from the board
 
-Open the GitHub issues labelled `good-first-skill`. Roughly in order of difficulty:
+The full board is `docs/TASKS.md`; these skills are TASK-030 through TASK-036,
+in its Tier 2. Open the GitHub issues labelled `good-first-skill`. Roughly in
+order of difficulty:
 
 | Skill | Learned? | What makes it interesting |
 |---|---|---|

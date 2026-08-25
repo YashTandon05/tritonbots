@@ -280,18 +280,57 @@ tritonbots/
 
 ## 12. Status and what remains
 
-**Delivered:** `docs/SETUP.md` (17 steps, blank directory → working stack, cross-platform, every step ending in a verification command) and `docs/ONBOARDING.md` (recruit day-one path: install → clone → watch robots move → talk to the referee → train → write a reward term → open a PR).
+*Updated 2026-08-25. The authoritative, tiered task list is `docs/TASKS.md`;
+this section is the summary.*
 
-**Must be complete before recruitment:**
+**Delivered:** the scaffolding described in this document is built and
+verified. `docs/SETUP.md` runs end to end (all 17 steps, all seven acceptance
+checks), and `docs/SETUP_LOG.md` records every deviation reality forced on the
+spec. Working today: the `core/` contracts, the rSim backend with curriculum
+`reconfigure()`, referee ingest through to our colour-neutral `GameState`, the
+`VisionPublisher` that renders any `WorldState` in the browser, `GoToPoint`,
+the composable reward registry, the pinned Docker stack, and CI on Python 3.11.
+Measured throughput: **521 steps/s**, 6v6, 60 Hz, single process.
+
+Two items this section previously listed as blocking are **closed**:
+
+- **TASK-001 — done.** The contradictions resolved empirically, and not in our
+  favour: Division B is `field_type=1`, not 0; the action vector is length
+  **8**, not 6; and angle units are *asymmetric* — degrees coming out, radians
+  per second going in. Each of those had a wrong value written into an earlier
+  draft of this codebase. See `docs/RSIM_FACTS.md`.
+- **TASK-002 — done**, and it was worth the fear it was given here. rSim builds
+  and tests on Python 3.11 in CI. It needed `<cstdint>` includes for GCC 13, a
+  pybind11 bump, C++17, and a migration to `scikit-build-core` because
+  `pip install -e` was silently producing a package with no compiled extension
+  at all. The 3.10 fallback was never used.
+
+**Still blocking recruitment**, re-cut around what a recruit actually touches
+on day one — the training path, not the match path:
 
 | ID | Task |
 |---|---|
-| TASK-001 | Verify rSim conventions; fill in `docs/RSIM_FACTS.md` |
-| TASK-002 | rSim building on Python 3.11 in CI — **highest-risk item in the project** |
-| TASK-010/011 | `net/vision.py`, `net/robot_control.py` |
-| TASK-013/014 | Colour and field-side resolution; `NetworkBackend.observe()` |
-| TASK-020 | `perception/tracker.py` |
-| TASK-041 | `tactics/scripted.py` — baseline opponent (nothing is evaluable without it) |
+| TASK-006 | **Config loader.** `configs/` has four subdirectories, a Hydra dependency, and no readers. Everything else composes through it. |
 | TASK-050/052/054/056 | Skill env, synthetic referee, domain randomisation, `rl/train.py` |
+| TASK-058/059 | `apps/eval.py`; checkpoint and resume |
+| TASK-007 | Skill registry wiring — `skill_names()` returns `[]` today |
+| TASK-041 | `tactics/scripted.py` — baseline opponent (nothing is evaluable without it) |
+| TASK-010/011/012 | `net/vision.py`, `net/robot_control.py`, `apps/wiggle.py` — proves the outbound UDP path |
+| TASK-003/004/005/008 | CI/ODE parity, a regression guard on the four rSim facts, the untested macOS path, and one fresh-clone rehearsal by somebody who did not build this |
+| TASK-060–064 | Make the Atlantis cluster reproducible from a clone rather than from one hand-built shared checkout |
 
-**Can wait:** sim control, GC team client (TCP 10008 with RSA signing), GC CI-mode client, individual skill implementations, tactics env, set-encoder observations, vectorisation benchmarking, self-play opponent pool.
+**Moved to the first weeks of fall:** TASK-013/014 (colour and side resolution,
+`NetworkBackend.observe()`) and TASK-020 (`perception/tracker.py`). The
+two-backend parity test remains the acceptance test for this whole design and
+still has to pass — but it gates the match stack, not anyone's arrival.
+
+**Can wait:** sim control, GC team client (TCP 10008 with RSA signing), GC
+CI-mode client, individual skill implementations, tactics env, set-encoder
+observations, vectorisation benchmarking, self-play opponent pool, autoref.
+
+**One correction to §8 above:** the HPC story there is written around an
+Apptainer image. Our cluster is **Atlantis**, the UCSD Supercomputing Club's
+SDSC-hosted machine, and it has no container runtime at all — training runs
+directly in a per-user venv against a shared user-space ODE prefix. The rest of
+§8's practical advice (offline W&B, checkpoint-and-resume, `OMP_NUM_THREADS=1`)
+is unaffected. `docs/ONBOARDING.md` has the current cluster workflow.

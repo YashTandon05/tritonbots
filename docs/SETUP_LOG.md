@@ -1025,3 +1025,126 @@ Notes:        No system state was changed by this pass -- verification and
               documentation only. The two throwaway configure runs used to
               prove the silent-fallback behaviour were done in the scratchpad
               against a freshly downloaded tarball, never installed.
+
+## Post-Step-16 — task board rebuilt as docs/TASKS.md, CI ODE defect fixed   [PASS]
+Verification: `make lint` -> ruff "All checks passed!" + mypy "Success: no
+              issues found in 6 source files"; `pytest -q` -> 10 passed,
+              1 skipped (both unchanged before and after).
+              `.github/workflows/ci.yml` re-parsed as YAML (13 steps).
+              `make proto` -> 23 modules from 23 protos.
+              `python -m tbots.apps.viz_rsim --seconds 3` -> 516 steps/s.
+              The new libccd assertion was checked against this machine's
+              known-good ODE before being added to CI:
+              `ldd /usr/local/lib/libode.so.8 | grep libccd` ->
+              `libccd.so.2 => /lib/x86_64-linux-gnu/libccd.so.2`.
+Deviations:   *** ONE REAL DEFECT FOUND AND FIXED ***
+              `.github/workflows/ci.yml` did NOT install `libccd-dev`, and
+              its ODE cache key was still `ode-0.16.2-double-${{ runner.os }}`.
+              The "Step 1 (addendum)" entry above records this as corrected --
+              but it was corrected only in SETUP.md's *printed copy* of the
+              workflow (Step 15.4) and in Step 17.1's Apptainer recipe. The
+              actual workflow file in `.github/` was never touched. So every
+              green CI run since 2026-08-11 built ODE against ODE's BUNDLED
+              libccd while every developer machine uses the system one --
+              exactly the silent physics divergence that addendum was written
+              to prevent, and one no test in the suite can detect.
+              Fixed three ways: `libccd-dev` added to the apt list; cache key
+              bumped to `ode-0.16.2-double-sysccd-${{ runner.os }}` so the
+              stale artifacts cannot be restored over the corrected build; and
+              an `ldd /usr/local/lib/libode.so.8 | grep -q libccd` gate added
+              to the Install ODE step, since configure exits 0 either way and
+              there is no flag that turns the fallback into an error.
+              EXPECT THE NEXT CI RUN TO BE SLOW -- the key bump forces a full
+              ODE rebuild from source. That is intended, once.
+              Kept the repo's two existing improvements over SETUP.md's
+              printed version: staging under `$HOME/ode-install` (actions/cache
+              runs unprivileged and cannot write root-owned /usr/local), and
+              the two-mirror download with a sha256 check.
+              Known remaining divergence, deliberately not chased: the human's
+              dev-box ODE was configured with `--disable-asserts`, CI's is not.
+              Asserts abort on invalid state rather than changing physics, so
+              this is a note for whoever debugs an ODE abort in CI, not a bug.
+
+              DOC RESTRUCTURE (the actual request): SETUP.md's task board has
+              been replaced by `docs/TASKS.md` and re-cut against what the
+              build actually produced.
+              - TASK-001 and TASK-002 closed with evidence. TASK-002 was
+                labelled "the highest-risk item in the whole project" and
+                landed without the Python 3.10 fallback ever being used.
+              - TASK-013, TASK-014 and TASK-020 demoted from "before recruits
+                arrive" to "first weeks of fall", on human decision. Rationale
+                recorded in TASKS.md section 1: a recruit's day one is
+                rSim -> reward -> train -> watch and never touches
+                NetworkBackend, perception, or a socket. TASK-010/011/012 stay
+                in Tier 1 -- small, self-contained, and they prove the
+                outbound UDP direction end to end.
+              - 12 tasks ADDED. Roughly half were already recorded as findings
+                in this log with no owner attached; the rest came from auditing
+                the tree against what the docs claim. Each was confirmed by
+                running or grepping, not by reading:
+                TASK-006 config loader -- `grep -r "yaml|hydra|OmegaConf"
+                  src/tbots` returns NOTHING. `hydra-core` is a declared
+                  dependency with zero consumers, every port is a constructor
+                  default, and configs/ is not a Hydra tree (no root
+                  config.yaml, no `defaults:` list anywhere) so
+                  `env=div_b_6v6 reward=example` cannot compose. This is the
+                  largest structural hole and the real fix for the
+                  10006-vs-10020 workaround logged above.
+                TASK-058 apps/eval.py -- referenced 4x in ONBOARDING, absent
+                  from the tree, and absent from the old board. ONBOARDING's
+                  own status banner flagged it as "a real gap"; it is now
+                  tracked.
+                TASK-059 checkpoint/resume -- implied by SETUP.md 17.2,
+                  ONBOARDING's Atlantis job script, and ARCHITECTURE section 8
+                  ("not optional"), owned by nobody. Atlantis walltime is 12h.
+                TASK-007 skill registry -- `src/tbots/skills/__init__.py` is
+                  empty, so nothing imports go_to_point and `skill_names()`
+                  returns `[]` (verified by running it). ONBOARDING's cheat
+                  sheet tells recruits to run exactly that, and
+                  `build_skill("go_to_point")` raises KeyError, which breaks
+                  the config-driven policy swap the Skill interface exists for.
+                TASK-003/004/005/008 -- the build is verified only by the
+                  machine and the process that built it. 004 notes that
+                  `test_state_length_matches_constants` contains no assertion
+                  at all, and that a wrong ACTION_LEN cannot raise because
+                  setActions() indexes an unchecked std::vector. 005 notes
+                  that no part of Step 1M (macOS) has ever been executed by
+                  anyone or by CI, though ARCHITECTURE calls macOS
+                  first-class.
+                TASK-060..064 -- Atlantis. `env-atlantis.sh` is IN .gitignore
+                  and exists only inside the shared checkout, while ONBOARDING
+                  tells recruits it is "already in this checkout";
+                  `scripts/train_atlantis.slurm` is `sbatch`-ed by ONBOARDING
+                  but exists only as a fenced code block; `containers/` is
+                  empty and SETUP.md Step 17 has no log entry, so the
+                  Apptainer image was never built -- and Atlantis has no
+                  container runtime, so that scope needs an explicit decision
+                  rather than silent abandonment. Also: torch/CUDA wheel
+                  unpinned against a `>=2.2` floor, W&B entity nonexistent,
+                  and no SLURM smoke path that does not depend on TASK-056.
+                TASK-018 autoref -- commented out in docker-compose.yml, and
+                  without it the GC cannot enforce ball placement or robot
+                  counts, so no realistic full-match evaluation is possible.
+              - Named one recurring pattern: three config files already
+                specify features that do not exist
+                (`domain_randomization.enabled: true`, `encoder: set_encoder`,
+                `backend.kind: rsim`). They are harmless only because nothing
+                reads configs at all; TASK-006 makes them load-bearing on the
+                day it lands. Schedule TASK-006 WITH the tasks whose keys it
+                activates, not before them.
+Notes:        Files touched: NEW `docs/TASKS.md`; `docs/SETUP.md` (board
+              replaced by a pointer, and "You are done when" now references
+              TASKS.md Tier 1); `docs/ARCHITECTURE.md` section 12 rewritten and
+              a correction added noting that section 8's Apptainer-based HPC
+              story does not match Atlantis, which has no container runtime;
+              `docs/ONBOARDING.md` (status banner re-dated and pointed at
+              TASKS.md, Part 2's "pick one from the board" likewise);
+              `README.md` ("pick up a task" row); `.github/workflows/ci.yml`.
+              Task IDs are unchanged throughout, so every
+              `NotImplementedError("TASK-0xx")` marker in the source still
+              resolves.
+              No source file under `src/` was modified. Everything found in
+              the audit became a task rather than a quiet fix, except the CI
+              defect above, which the human explicitly asked to have fixed.
+              Recruitment target used for the tiering: mid-October 2026, per
+              the human, i.e. roughly 7 weeks from 2026-08-25.

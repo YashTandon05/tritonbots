@@ -16,7 +16,14 @@ jobs:
           # protoc for `python -m grpc_tools.protoc`, but protoletariat's
           # import-rewriting step shells out to a `protoc` binary on PATH --
           # that call needs the real apt package, not just the pip one.
-          sudo apt-get install -y build-essential cmake autoconf automake libtool protobuf-compiler
+          #
+          # libccd-dev is load-bearing and is NOT optional (SETUP.md Step 1,
+          # SETUP_LOG "Step 1 (addendum)"): ODE's --with-libccd defaults to
+          # `system`, but when no system libccd is present configure silently
+          # falls back to ODE's bundled copy and STILL EXITS 0. Without this
+          # package, CI builds a physically different ODE from every developer
+          # machine and no test in the suite would catch it.
+          sudo apt-get install -y build-essential cmake autoconf automake libtool protobuf-compiler libccd-dev
 
       - name: Cache ODE
         id: ode-cache
@@ -25,7 +32,12 @@ jobs:
           # Staged under $HOME, not /usr/local: actions/cache extracts as the
           # unprivileged runner user and cannot write into root-owned /usr/local.
           path: ~/ode-install
-          key: ode-0.16.2-double-${{ runner.os }}
+          # Bump this key whenever the ODE configure flags or its dependencies
+          # change, or the cache restores a library built with different
+          # physics settings. `sysccd` records that this build links the
+          # SYSTEM libccd; the previous key's artifacts were built without
+          # libccd-dev present and must not be restored over this one.
+          key: ode-0.16.2-double-sysccd-${{ runner.os }}
 
       - name: Build ODE
         if: steps.ode-cache.outputs.cache-hit != 'true'
@@ -66,7 +78,11 @@ jobs:
           test "$(pkg-config --modversion ode)" = "0.16.2"
           test "$(pkg-config --variable=libdir ode)" = "/usr/local/lib"
           grep -q dDOUBLE /usr/local/include/ode/precision.h
-          echo "ODE 0.16.2 double-precision at /usr/local/lib — OK"
+          # The only way to prove configure did not silently fall back to the
+          # bundled libccd: a system-libccd build leaves ccd symbols undefined
+          # in libode and resolves them at load time against libccd.so.2.
+          ldd /usr/local/lib/libode.so.8 | grep -q libccd
+          echo "ODE 0.16.2 double-precision, system libccd, at /usr/local/lib — OK"
 
       - uses: astral-sh/setup-uv@v3
       - run: uv venv --python 3.11

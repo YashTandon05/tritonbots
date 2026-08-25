@@ -3964,39 +3964,23 @@ Clone the repo into the WSL filesystem (`~/code/tritonbots`), never into `/mnt/c
 
 ## The task board
 
-Everything the setup deliberately leaves unimplemented. Copy these into GitHub Issues.
+> **Moved.** The live task board is now **`docs/TASKS.md`**.
+>
+> The board that used to sit here described the world *before* this guide had
+> ever been run. It has been overtaken by the build: TASK-001 and TASK-002 are
+> closed, twelve tasks that the build surfaced were never on it, and the
+> must-do/can-wait split has been re-cut around what actually blocks a recruit's
+> first day. `docs/TASKS.md` carries the current tiers, sizes, owners, and a
+> "done when" gate for every item, plus a section recording exactly what changed
+> from this version and why.
+>
+> The task IDs are unchanged — `TASK-050` still means `rl/envs/skill_env.py`.
+> The `NotImplementedError("TASK-0xx")` markers throughout this guide remain
+> correct; look the ID up in `docs/TASKS.md`.
 
-### Must be done before recruits arrive
-
-| ID | Task | Why it blocks |
-|---|---|---|
-| TASK-001 | Verify rSim conventions; fill in `docs/RSIM_FACTS.md` | Everything in `backends/rsim.py` is guesswork until this is done |
-| TASK-002 | Get rSim building on Python 3.11 in CI | Highest-risk item in the whole project |
-| TASK-010 | `net/vision.py` — receive and merge multi-camera detection frames | Blocks the network backend |
-| TASK-011 | `net/robot_control.py` — send `RobotControl` over UDP | Blocks the network backend |
-| TASK-012 | `apps/wiggle.py` — drive a robot in the ER-Force simulator | Proves the outbound UDP path |
-| TASK-013 | Colour and field-side resolution in the network backend | Rule 3 depends on it |
-| TASK-014 | `NetworkBackend.observe()` | Unblocks the parity test |
-| TASK-020 | `perception/tracker.py` — fusion, velocity estimation, latency compensation | Match play is impossible without it |
-| TASK-050 | `rl/envs/skill_env.py` | Recruits cannot train anything without an env |
-| TASK-052 | `rl/envs/synthetic_referee.py` | Training needs referee state without the GC in the loop |
-| TASK-054 | `rl/wrappers/domain_rand.py` | Without this, everything we train will fail sim-to-real |
-| TASK-056 | `rl/train.py` — Hydra entry point | The command recruits will run on day one |
-| TASK-041 | `tactics/scripted.py` — baseline opponent | You cannot evaluate a learned tactic with nothing to play against |
-
-### Can wait until after recruitment
-
-| ID | Task |
-|---|---|
-| TASK-015 | `net/sim_control.py` — teleport for episode resets |
-| TASK-016 | `net/team_client.py` — GC team interface (TCP 10008, RSA signing) |
-| TASK-017 | GC `ci` mode client — drive the real referee from rSim at 100× realtime |
-| TASK-030–037 | The skill implementations |
-| TASK-040, 042, 043 | Roles, learned tactics wrapper, restart routines |
-| TASK-051 | `rl/envs/tactics_env.py` — the options wrapper |
-| TASK-053 | `rl/obs/builders.py` — permutation-invariant relational encoding |
-| TASK-055 | `rl/vec.py` — vectorisation and throughput benchmarking |
-| TASK-057 | `rl/opponents.py` — self-play opponent pool |
+Everything this setup deliberately leaves unimplemented is listed there, with
+the two exceptions this guide builds itself: TASK-001 (verify rSim's
+conventions) and TASK-002 (rSim on Python 3.11).
 
 ---
 
@@ -4059,6 +4043,6 @@ git push -u origin main
 - [ ] `docs/RSIM_FACTS.md` contains four verified answers, not question marks
 - [ ] The measured steps/s number is in the README
 - [ ] CI is green on a fresh clone
-- [ ] Every TASK id in the "before recruits arrive" table is a GitHub issue with an owner
+- [ ] Every Tier 1 id in `docs/TASKS.md` is a GitHub issue with an owner
 
 At that point a new recruit can clone the repo, run one command, watch six robots move in a browser, and start writing the code that actually wins matches.

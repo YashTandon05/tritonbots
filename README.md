@@ -35,6 +35,7 @@ rSim, 6v6, 60 Hz, single process:  521 steps/s
 | set up a new machine | `docs/SETUP.md` |
 | get productive on day one | `docs/ONBOARDING.md` |
 | understand the architecture | `docs/ARCHITECTURE.md` |
+| pick up a task | `docs/TASKS.md` |
 
 ## The four rules
 
