@@ -13,6 +13,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv-*/
 .pytest_cache/
 .ruff_cache/
 
@@ -33,3 +34,4 @@ wandb/
 # name, so ignore that whole family, not just the live file.
 tools/gc-config/state-store.json.stream
 tools/gc-config/*_state-store.json.stream
+env-atlantis.sh
