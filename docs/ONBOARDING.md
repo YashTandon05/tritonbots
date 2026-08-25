@@ -829,6 +829,19 @@ Hydra lets you override any config key from the command line with dots: `train.n
 
 Local training is for iterating on a reward function. Real runs go to the cluster.
 
+### SDSC account setup
+
+Use the SDSC login node for the first account setup, then submit training through the cluster scheduler from there. The exact host and allocation vary by project, but the workflow is the same for Expanse and other SDSC systems.
+
+1. **Request access through the PI or project lead.** Your project must already have an SDSC allocation; if you do not have one, the team lead must add you before you can run jobs.
+2. **Confirm your identity and MFA.** SDSC access is tied to your institution account and an active MFA / identity check. Complete any required portal verification before trying to log in.
+3. **Create and upload an SSH key.** On your laptop, run `ssh-keygen -t ed25519 -C "your.name@ucsd.edu"` and add the public key to the SDSC account or portal. Keep a backup of the private key; if the cluster is new to you, the first login usually fails because the key was not registered.
+4. **Test the login before you submit anything.** From a terminal, run `ssh <username>@expanse.sdsc.edu` (or the hostname your PI provides). If the connection hangs, asks for a password, or says permission denied, fix the key registration first — a broken SSH setup is always the first thing to check.
+5. **Check your project membership.** After logging in, run `id` and `groups` to confirm you are in the right allocation group. If `squeue` or `sbatch` says you have no access, your username is usually not on the project yet.
+6. **Use the cluster the way the cluster expects.** Avoid Docker on compute nodes; use Apptainer or the project-provided containers instead. The login node is for setup, monitoring, and job submission; the compute nodes are for training.
+
+When everything is configured correctly, the first job should be a short `sbatch` smoke test, not a long RL run. If the job fails immediately, the issue is usually SSH, project membership, or a missing module / environment setup rather than the training code itself.
+
 Three things about HPC that catch everyone:
 
 1. **Most clusters ban Docker.** We use Apptainer (formerly Singularity).
