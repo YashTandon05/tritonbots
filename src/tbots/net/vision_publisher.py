@@ -16,6 +16,7 @@ import time
 from tbots._pb.messages_robocup_ssl_geometry_pb2 import SSL_FieldShapeType
 from tbots._pb.messages_robocup_ssl_wrapper_pb2 import SSL_WrapperPacket
 from tbots.core.geometry import DIV_B, FieldGeometry
+from tbots.core.perspective import IDENTITY, Perspective
 from tbots.core.state import WorldState
 from tbots.core.units import m_to_mm
 from tbots.net.multicast import tx_socket
@@ -28,14 +29,21 @@ _LINE_THICKNESS_MM = 10
 class VisionPublisher:
     def __init__(self, group: str = "224.5.23.2", port: int = 10006,
                  ttl: int = 0, geometry: FieldGeometry = DIV_B,
-                 we_are_yellow: bool = False) -> None:
+                 perspective: Perspective = IDENTITY) -> None:
         self._sock = tx_socket(ttl=ttl)
         self._addr = (group, port)
         self._geom = geometry
-        self._yellow = we_are_yellow
+        self._perspective = perspective
         self._frame = 0
 
     def publish(self, world: WorldState, t_capture: float | None = None) -> None:
+        # This is the ONE place we go the other way: everything upstream is
+        # in our frame (we are `us`, we attack +x), and SSL-Vision is in the
+        # field's frame. Same transform, opposite direction -- it is its own
+        # inverse. With the default IDENTITY perspective this is a no-op,
+        # which is exactly right for rSim.
+        world = self._perspective.world_state(world)
+
         pkt = SSL_WrapperPacket()
         d = pkt.detection
         d.frame_number = self._frame
@@ -52,8 +60,9 @@ class VisionPublisher:
         b.pixel_x = 0.0
         b.pixel_y = 0.0
 
-        ours = d.robots_yellow if self._yellow else d.robots_blue
-        theirs = d.robots_blue if self._yellow else d.robots_yellow
+        yellow = bool(self._perspective.we_are_yellow)
+        ours = d.robots_yellow if yellow else d.robots_blue
+        theirs = d.robots_blue if yellow else d.robots_yellow
 
         for group, robots in ((ours, world.us), (theirs, world.them)):
             for r in robots.values():

@@ -96,6 +96,22 @@ These govern every file and are the reason the codebase should still be maintain
 
 **Rule 3 — We are always `us`, we always attack `+x`.** The world model has `us` and `them`, never `blue` and `yellow`. The backend flips coordinates when we are yellow or defending the positive half. Every skill, policy, and reward function is written as if we are blue attacking rightward. This eliminates a whole family of sign-error bugs and halves the state space a policy must learn.
 
+Rule 3 is a module, not a convention: `core/perspective.py`. A `Perspective`
+answers the only two questions that separate the field's view of a match from
+ours — *which colour are we* and *are we defending +x today* — and carries the
+transform that follows. `net.referee.resolve_perspective()` derives it from the
+referee message; everything that touches the wire consumes it rather than
+re-deriving it. Two adapters make the seam real: the referee-resolved one for
+the match stack, and `IDENTITY` for rSim, which has no colours and no half time.
+
+Two details worth keeping in your head, because both have bitten other teams:
+the transform is a **180° rotation, not a mirror** (a mirror flips handedness and
+turns `vy = left` into `vy = right`), and it is **its own inverse**, so the same
+method converts field→ours on the way in and ours→field on the way out.
+Outgoing `RobotCommand` velocities are never transformed at all — they are in
+the robot's local frame, and the heading they are relative to was normalised on
+the way in.
+
 **Rule 4 — Units convert exactly once, at the backend boundary.** Above it: meters, radians, seconds. Below it the wire formats vary (SSL-Vision uses millimetres, rSim uses degrees). All conversion lives in `core/units.py` and the backend adapters.
 
 ---

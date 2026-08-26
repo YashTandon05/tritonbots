@@ -1974,6 +1974,15 @@ A curriculum is then just a schedule in config (see Step 14.5), and the training
 
 ### 9.3 `src/tbots/backends/network.py` (skeleton)
 
+> **Superseded 2026-08-26 — Rule 3 now has a module.** The code block below is
+> the original transcription and is kept for the record. The live files differ:
+> colour and field-side resolution moved into `src/tbots/core/perspective.py`
+> and `net.referee.resolve_perspective()`, so it is derived once instead of
+> in each module that touches the wire. If you are rebuilding from this guide,
+> take `core/perspective.py` from the repo rather than re-creating the split
+> shown here. See `docs/ARCHITECTURE.md` §5 (Rule 3) and
+> `tests/test_perspective.py`.
+
 ```python
 """Match backend: the ER-Force simulator, or real robots.
 
@@ -2138,6 +2147,15 @@ def drain(sock: socket.socket, bufsize: int = 65535) -> list[bytes]:
 
 ### 10.2 `src/tbots/net/referee.py`
 
+> **Superseded 2026-08-26 — Rule 3 now has a module.** The code block below is
+> the original transcription and is kept for the record. The live files differ:
+> colour and field-side resolution moved into `src/tbots/core/perspective.py`
+> and `net.referee.resolve_perspective()`, so it is derived once instead of
+> in each module that touches the wire. If you are rebuilding from this guide,
+> take `core/perspective.py` from the repo rather than re-creating the split
+> shown here. See `docs/ARCHITECTURE.md` §5 (Rule 3) and
+> `tests/test_perspective.py`.
+
 ```python
 """Receive Referee messages from the game controller and normalise them."""
 
@@ -2282,6 +2300,15 @@ class RefereeReceiver:
 > **Field-name check.** `max_allowed_bots`, `current_action_time_remaining`, and `blue_team_on_positive_half` exist in the current game-controller proto but not in the archived refbox one. If any of these raise `ValueError: Unknown field`, open `protos/ssl-game-controller/proto/ssl_gc_referee_message.proto` and read the actual field names — that file is always the truth.
 
 ### 10.3 `src/tbots/net/vision_publisher.py` — build this early, it pays for itself
+
+> **Superseded 2026-08-26 — Rule 3 now has a module.** The code block below is
+> the original transcription and is kept for the record. The live files differ:
+> colour and field-side resolution moved into `src/tbots/core/perspective.py`
+> and `net.referee.resolve_perspective()`, so it is derived once instead of
+> in each module that touches the wire. If you are rebuilding from this guide,
+> take `core/perspective.py` from the repo rather than re-creating the split
+> shown here. See `docs/ARCHITECTURE.md` §5 (Rule 3) and
+> `tests/test_perspective.py`.
 
 ```python
 """Turn ANY WorldState into SSL-Vision packets.

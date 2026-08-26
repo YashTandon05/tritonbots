@@ -31,6 +31,7 @@ rSim, 6v6, 60 Hz, single process:  521 steps/s
 | write a skill | `src/tbots/skills/` |
 | write a tactic | `src/tbots/tactics/` |
 | change field dimensions | `src/tbots/core/geometry.py` |
+| understand colour / side flipping | `src/tbots/core/perspective.py` |
 | change ports | `configs/net/` |
 | set up a new machine | `docs/SETUP.md` |
 | get productive on day one | `docs/ONBOARDING.md` |

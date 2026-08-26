@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from tbots.backends.base import Backend, Scenario
 from tbots.core.command import RobotCommand
 from tbots.core.geometry import DIV_B, FieldGeometry
+from tbots.core.perspective import Perspective
 from tbots.core.state import WorldState
 from tbots.net.referee import RefereeReceiver
 from tbots.net.robot_control import RobotControlSender
@@ -59,7 +60,7 @@ class NetworkBackend(Backend):
         if self._sim_control is None:
             raise RuntimeError("reset() requires simulation control; "
                                "not available against real robots")
-        self._sim_control.place(scenario, self._flip_state())
+        self._sim_control.place(scenario, self.perspective)
         return self.observe()
 
     def step(self, commands: Sequence[RobotCommand]) -> WorldState:
@@ -67,16 +68,23 @@ class NetworkBackend(Backend):
         self._vision.wait_for_next_frame(timeout=0.05)
         return self.observe()
 
-    def observe(self) -> WorldState:
-        # TODO(setup): merge detection frames, run the tracker, attach
-        # GameState, apply the colour/side flip.
-        raise NotImplementedError("TASK-014")
+    @property
+    def perspective(self) -> Perspective:
+        """Rule 3: which colour we are, and which way round the field is.
 
-    def _flip_state(self):
-        # TODO(setup): derive (we_are_yellow, we_defend_positive_x) from the
-        # referee message and cache it. Recompute at every stage change,
-        # because sides swap at half time.
-        raise NotImplementedError("TASK-013")
+        Resolved by RefereeReceiver and simply read here. This used to be a
+        second derivation of the same two facts from the same message
+        (TASK-013); there is now exactly one, and half time needs no special
+        handling because the referee tells us the moment it swaps.
+        """
+        return self._referee.perspective
+
+    def observe(self) -> WorldState:
+        # TODO(setup): merge detection frames and run the tracker, then
+        # attach GameState. The colour/side normalisation is NOT your job
+        # here -- pass self.perspective down to the tracker and let it apply
+        # the transform once, on the way in.
+        raise NotImplementedError("TASK-014")
 
     def close(self) -> None:
         self._vision.close()

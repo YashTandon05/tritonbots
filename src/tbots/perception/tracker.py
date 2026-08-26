@@ -17,6 +17,7 @@ information it can never have at a match.
 from __future__ import annotations
 
 from tbots.core.geometry import FieldGeometry
+from tbots.core.perspective import IDENTITY, Perspective
 from tbots.core.state import WorldState
 
 
@@ -24,5 +25,17 @@ class Tracker:
     def __init__(self, geometry: FieldGeometry) -> None:
         self._geom = geometry
 
-    def update(self, frames: list, t_now: float) -> WorldState:
+    def update(self, frames: list, t_now: float,
+               perspective: Perspective = IDENTITY) -> WorldState:
+        """Fuse `frames` (raw, field-frame, blue/yellow) into one WorldState.
+
+        `perspective` is passed per call rather than held, because sides swap
+        at half time and this object outlives that. Apply it EXACTLY ONCE, at
+        the end: fuse and estimate velocities in the field frame the cameras
+        report, then rotate the finished frame with
+        `perspective.world_state(...)` and split blue/yellow into us/them by
+        `perspective.we_are_yellow`. Rotating first and fusing second gives
+        the same answer for positions and a subtly wrong one for anything
+        that remembers a previous frame.
+        """
         raise NotImplementedError("TASK-020")

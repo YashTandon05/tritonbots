@@ -1148,3 +1148,127 @@ Notes:        Files touched: NEW `docs/TASKS.md`; `docs/SETUP.md` (board
               defect above, which the human explicitly asked to have fixed.
               Recruitment target used for the tiering: mid-October 2026, per
               the human, i.e. roughly 7 weeks from 2026-08-25.
+
+## Post-Step-16 — Rule 3 extracted into core/perspective.py   [PASS]
+Verification: `pytest -q` -> 29 passed, 1 skipped (was 10 passed, 1 skipped;
+              +19 new tests, none of which need a socket or a running game
+              controller).
+              `make lint` -> ruff "All checks passed!" + mypy "Success: no
+              issues found in 7 source files" (was 6 -- perspective.py is
+              inside the mypy-checked core).
+              NO-REGRESSION CHECK, reproducing the exact referee decode
+              recorded in the Step 15 follow-up entry above:
+                DIRECT_FREE_BLUE, blue="TritonBots", blue_team_on_positive_half,
+                designated_position (1000, -500) mm, action time 5e6 us
+                -> FREE_KICK | ours=True | target=(-1.0, 0.5) | t=5.0
+              Byte-identical to the value logged before this change.
+              `python -m tbots.apps.viz_rsim --seconds 3` -> 532 steps/s,
+              in line with the 516-521 measured before (VisionPublisher's
+              publish() gained a transform call, which is a no-op under the
+              default IDENTITY perspective).
+Deviations:   *** THIS IMPLEMENTS ARCHITECTURE CANDIDATE A AND CLOSES
+              TASK-013, ON EXPLICIT HUMAN INSTRUCTION (2026-08-26). ***
+              CLAUDE.md section 4 forbids implementing TASK items. The human
+              asked for this one directly after an architecture review, so it
+              is a sanctioned override, recorded here rather than assumed.
+              Scope was held to the extraction: TASK-014 (observe()),
+              TASK-010, TASK-011, TASK-015 and TASK-020 are all still
+              NotImplementedError stubs. Only their signatures and docstrings
+              changed, so the seam is in place for whoever writes them.
+
+              THE PROBLEM. Rule 3 ("we are always `us`, we always attack +x")
+              was knowledge, not a module. RefereeReceiver._resolve_sides()
+              already derived (we_are_yellow, flip_x) from the referee
+              message, and NetworkBackend._flip_state() -- TASK-013 -- was
+              specified to derive the same two facts from the same message a
+              second time. VisionReceiver, RobotControlSender, SimControlSender
+              and Tracker each needed them too, and four of those five are
+              still stubs, so the duplication had not been written yet. That
+              is precisely why it was cheap to prevent now.
+
+              WHAT WAS ADDED.
+              NEW `src/tbots/core/perspective.py`. A frozen `Perspective`
+              dataclass carrying the two answers (`we_are_yellow`, `flip`)
+              plus the transform that follows: `point`, `velocity`, `angle`,
+              `robot_state`, `ball_state`, `world_state`. Two module
+              constants: `UNRESOLVED` (before the referee has named us) and
+              `IDENTITY` (blue, attacking +x -- rSim's perspective, and the
+              second adapter that makes this a real seam rather than a
+              hypothetical one). It is in `core/` and imports only
+              `core.state` and `core.units`, so Rule 1 holds.
+
+              Three facts are now written down in one place instead of being
+              folklore:
+                - The transform is a 180-DEGREE ROTATION, NOT A MIRROR. It
+                  negates x AND y and adds pi to headings. This matches what
+                  the original to_gamestate() did to placement_target, so it
+                  is a faithful extraction, not a behaviour change -- but
+                  nothing said so anywhere. Negating x alone would flip
+                  handedness and turn `vy = left` into `vy = right`.
+                - It is ITS OWN INVERSE, so one set of methods serves both
+                  directions: field->ours on the way in (vision, referee),
+                  ours->field on the way out (vision publisher, teleport).
+                - It must NEVER be applied to RobotCommand velocities. Those
+                  are robot-LOCAL, and the heading they are relative to was
+                  already normalised on the way in; flipping again drives
+                  every robot backwards for one half of every match. Noted in
+                  the module docstring and in robot_control.py's stub.
+
+              WHAT WAS CHANGED.
+              - `net/referee.py`: `_resolve_sides()` (a private method on a
+                class that opens a multicast socket in its constructor)
+                became `resolve_perspective(msg, team_name, current)`, a pure
+                module-level function. Same logic, including the stickiness
+                of both halves. `to_gamestate(msg, we_are_yellow, flip_x)` ->
+                `to_gamestate(msg, perspective)`. RefereeReceiver now holds a
+                Perspective and exposes it; its `we_are_yellow` and `flip_x`
+                properties are kept as delegating properties so
+                apps/ref_monitor.py and the troubleshooting sections of
+                SETUP.md and ONBOARDING.md ("print we_are_yellow and flip_x
+                from ref_monitor") still work unchanged.
+              - `backends/network.py`: `_flip_state()` deleted; a
+                `perspective` property reads it from the referee receiver.
+                Half time needs no special handling anywhere -- the referee
+                announces the swap and the next message updates it.
+              - `net/vision_publisher.py`: constructor takes
+                `perspective: Perspective = IDENTITY` in place of
+                `we_are_yellow: bool = False`, and `publish()` applies
+                `perspective.world_state(world)` to go our-frame ->
+                field-frame. LATENT BUG FIXED: the publisher previously wrote
+                our-frame coordinates straight onto the wire, so a match
+                render would have been rotated 180 degrees for whichever half
+                we defended +x. Nothing had noticed because the only caller
+                today is rSim, whose perspective is IDENTITY, under which the
+                new call is a no-op.
+              - `perception/tracker.py`, `net/robot_control.py`,
+                `net/sim_control.py`: still NotImplementedError, but their
+                signatures now carry the Perspective and their docstrings say
+                where to apply it (tracker: exactly once, at the END, after
+                fusing in the camera's field frame -- rotating before fusing
+                gives subtly wrong velocities).
+              - `net/robot_control.py` also gained `BLUE_PORT`/`YELLOW_PORT`
+                constants; the perspective chooses the port and nothing else.
+
+              NEW `tests/test_perspective.py`, 19 tests, no mocks and no
+              sockets. Builds real `Referee` protobuf messages in-process.
+              Covers the transform (rotation not mirror, involution, vtheta
+              and z untouched), all four colour x side combinations, case
+              sensitivity of the team name, stickiness, the half-time swap,
+              placement-target normalisation, `ours` following our colour
+              rather than the command colour, and one end-to-end assertion
+              that the goal we attack lands at x=+4.5 in all four cases.
+              Before this, not one line of colour or side resolution was
+              testable without joining a multicast group.
+
+Notes:        Docs updated: `docs/ARCHITECTURE.md` section 5 (Rule 3 now names
+              the module and records the rotation/involution/local-frame
+              facts); `docs/TASKS.md` (TASK-013 marked DONE and absorbed;
+              TASK-014 and TASK-020 notes narrowed accordingly; new row in
+              section 2); `README.md` ("understand colour / side flipping").
+              `docs/SETUP.md` Steps 9.3, 10.2 and 10.3 each got a SUPERSEDED
+              note above the transcribed code block -- the blocks themselves
+              were left alone, since SETUP.md is the record of the original
+              build, but a rebuild that follows them literally would
+              re-create the split this change removed.
+              TASK-013 was in Tier 2 as of yesterday's re-tiering, so this is
+              work pulled forward, not a Tier 1 item cleared.

@@ -14,13 +14,20 @@ docs/SETUP_LOG.md Step 7.
 from __future__ import annotations
 
 from tbots.backends.base import Scenario
+from tbots.core.perspective import Perspective
 
 
 class SimControlSender:
     def __init__(self, host: str = "127.0.0.1", port: int = 10300) -> None:
         raise NotImplementedError("TASK-015")
 
-    def place(self, scenario: Scenario, flip_state) -> None:
+    def place(self, scenario: Scenario, perspective: Perspective) -> None:
+        """Teleport to `scenario`, which is in OUR frame.
+
+        Going out to the wire, so the transform runs in the field direction:
+        `perspective.point(...)` on each pose, and `we_are_yellow` decides
+        which colour slot each robot is teleported into.
+        """
         raise NotImplementedError("TASK-015")
 
     def close(self) -> None:

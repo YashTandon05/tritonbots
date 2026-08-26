@@ -13,11 +13,23 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from tbots.core.command import RobotCommand
+from tbots.core.perspective import IDENTITY, Perspective
+
+BLUE_PORT = 10301
+YELLOW_PORT = 10302
 
 
 class RobotControlSender:
-    def __init__(self, host: str = "127.0.0.1", port: int = 10301,
-                 we_are_yellow: bool = False) -> None:
+    def __init__(self, host: str = "127.0.0.1", port: int | None = None,
+                 perspective: Perspective = IDENTITY) -> None:
+        """`port` defaults to BLUE_PORT / YELLOW_PORT per the perspective.
+
+        The perspective decides which port we talk on -- and nothing else.
+        RobotCommand velocities are in the ROBOT'S LOCAL frame and must NOT
+        be flipped: the robot's heading was already normalised on the way in,
+        so flipping here would apply the rotation twice and drive every robot
+        backwards for one half of every match.
+        """
         raise NotImplementedError("TASK-011")
 
     def send(self, commands: Sequence[RobotCommand]) -> None:
