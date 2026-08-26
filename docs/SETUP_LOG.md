@@ -1272,3 +1272,92 @@ Notes:        Docs updated: `docs/ARCHITECTURE.md` section 5 (Rule 3 now names
               re-create the split this change removed.
               TASK-013 was in Tier 2 as of yesterday's re-tiering, so this is
               work pulled forward, not a Tier 1 item cleared.
+
+## Post-Step-16 — Perspective verified against the real game controller   [PASS]
+Verification: Three questions from the human, answered with evidence rather
+              than inference. The stack (docker compose) was already up; it
+              was left up, and the GC's side setting was restored to the value
+              it held before this pass.
+
+              (1) SEMANTICS, from the pinned proto rather than from our own
+              comments. protos/ssl-game-controller/proto/state/
+              ssl_gc_referee_message.proto:183-186 --
+                "// True, if the blue team will have it's goal on the positive
+                 x-axis of the ssl-vision coordinate system."
+              So the flag is about which goal a team DEFENDS, which is what
+              our `flip = (blue_team_on_positive_half != we_are_yellow)`
+              assumes. Confirmed correct. Note it is `optional`.
+
+              (2) THE FIELD IS ALWAYS THERE, on real packets. Sniffed the
+              live GC (v3.21.0, the version we are pinned to) on
+              224.5.23.1:10003: 404 packets, `blue_team_on_positive_half`
+              present in 404 of 404 (100%). GC source shows why -- it is
+              written unconditionally on every generated message
+              (internal/app/publish/messagegenerator.go:114,157), not only on
+              change. Real decode of a real packet:
+                blue='Unknown' yellow='TritonBots' blue_on_positive=False
+                -> we_are_yellow=True, flip=True.  Correct.
+
+              (3) LIVE SIDE CHANGE TRACKED IN BOTH DIRECTIONS. Drove the GC's
+              own websocket API (/api/control, an UpdateTeamState change with
+              onPositiveHalf) with a hand-rolled RFC 6455 client, since no
+              websocket library is in the venv:
+                baseline              wire blue_on_positive=True  -> flip=False
+                operator swaps ends   wire blue_on_positive=False -> flip=True
+                swapped back          wire blue_on_positive=True  -> flip=False
+              Colour unchanged throughout, as it must be.
+
+              (4) TRAINING IS ONE-SIDED BY CONSTRUCTION. `backends/rsim.py`
+              contains neither "perspective" nor "yellow" anywhere -- rSim has
+              no colours and no half time, so its WorldState is already in our
+              frame. Empirically: a robot commanded vx=+1.0 for one second
+              moves x +0.00 -> +0.87, i.e. "forward" is always +x. And the
+              same physical moment written in field coordinates for BOTH ends
+              normalises to byte-identical positions, headings and velocities
+              once the Perspective is applied.
+
+Deviations:   None to the code. No source file changed in this pass.
+
+Notes:        *** THE RULEBOOK DOES NOT SAY WHAT WE ASSUMED, AND IT DOES NOT
+              MATTER -- BUT SOMETHING ELSE IN IT DOES. ***
+              The published SSL rules (robocup-ssl.github.io/ssl-rules,
+              chapters/gamestructure.adoc) state that "the winning team
+              chooses the goal it will attack in the first half of the match"
+              and list a 300-second half-time break, but contain NO explicit
+              statement that teams change ends at half time. Our code comments
+              asserted the swap as fact; that assertion was inherited from
+              SETUP.md, not checked. It is now checked and it is not in the
+              rules text.
+
+              This turns out to be harmless, for a better reason than being
+              right: the game controller does not swap sides automatically
+              either. `proceedStage()` in internal/app/statemachine/
+              change_stage.go does not touch OnPositiveHalf at any stage
+              transition -- an operator sets it. So the side is whatever a
+              human tells the GC it is, whenever they tell it, and the GC
+              broadcasts the current truth in every packet. We are event-
+              driven off that field rather than off a rule, so we are correct
+              regardless of whether, or when, the swap happens.
+
+              THE REAL RULEBOOK FINDING, which our code already handles but
+              nobody had written down: COLOURS can also change mid-match.
+              "if both teams prefer the same color, the referee assigns the
+              colors by chance. In this case, the teams switch the colors
+              after the first half of the match as well as after the first
+              half of the overtime if applicable." We re-resolve colour from
+              the team NAME on every packet, so this is handled -- but any
+              future code that caches `we_are_yellow` once at startup would
+              be wrong for half of such a match. Worth keeping in mind for
+              TASK-011 (which picks port 10301 vs 10302 by colour) and
+              TASK-016.
+
+              ONE FAMILIARITY GAP THE FLIP DOES NOT CLOSE, for whoever writes
+              the observation builder (TASK-050/053): rSim assigns our robots
+              ids 0..n_us-1, always. At a real match our ids are whatever we
+              put on the field, anywhere in 0..15, and they arrive that way in
+              SSL-Vision's `robot_id`. An observation vector that indexes by
+              robot id will therefore see a layout in a match that it never
+              saw in training. The Perspective normalises the FRAME, not the
+              INDEXING. Same class of gap as domain randomisation (TASK-054),
+              which normalises neither: training state is perfect and
+              instantaneous, match state is tracked, noisy and 20-40 ms stale.
