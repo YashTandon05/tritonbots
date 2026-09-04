@@ -1,6 +1,6 @@
 # TritonBots — task board
 
-**Status: 2026-08-25.** Target: recruits arrive **mid-October 2026** (~7 weeks).
+**Status: 2026-09-04.** Target: recruits arrive **mid-October 2026** (~6 weeks).
 
 This is the single source of truth for what is left to build. It replaces the
 board that used to live at the end of `docs/SETUP.md`, which described the
@@ -63,6 +63,9 @@ in `docs/SETUP_LOG.md` unless noted.
 | GoToPoint | The reference skill. Converges in rSim inside 600 ticks. | `pytest tests/test_backend_parity.py::test_rsim_converges` |
 | Rule 3 as a module | **New 2026-08-26.** `core/perspective.py` — colour and side resolved once, consumed by referee, vision publisher, control sender, sim control, and tracker. Closes TASK-013. | `pytest tests/test_perspective.py` — 19 tests |
 | Reward machinery | `rl/rewards/registry.py` — `@register_reward`, `CompositeReward`, per-term contributions in `info["reward_terms"]`. | `rl/rewards/example.py` |
+| Domain randomisation | **New 2026-09-04 (`a81721e`).** `rl/wrappers/domain_rand.py` — per-episode command and vision latency, sampled in ticks from `backend.dt`, plus zero-action padding while the command queue fills. Closes the transport half of TASK-054. | `pytest tests/test_domain_rand.py` |
+| Run artifacts | **New 2026-09-04 (`a81721e`).** `rl/artifacts.py` — resolved-config dump, and checkpoint save/load with atomic `os.replace`, an fsync, a `format_version`, and metadata compatibility validation. This is TASK-059's machinery, complete. | `pytest tests/test_rl_artifacts.py` |
+| Hydra composition | **New 2026-09-04 (`a81721e`).** `configs/config.yaml` with a real `defaults:` list, so `env=div_b_6v6 reward=example train=default` composes. Hydra is pinned to not chdir and not create its own output dir. Part of TASK-006. | `python -m tbots.rl.train train.run_dir=/tmp/x` writes `/tmp/x/config.yaml` |
 | External stack | `docker compose up -d` brings up game controller (v3.21.0, pinned to our proto revision), ER-Force simulator, and vision-client. Team `TritonBots` registered. All image tags pinned by digest-checked version. | SETUP_LOG Step 13 |
 | Throughput | **521 steps/s**, 6v6, 60 Hz, single process, WSL2 dev box, with vision publishing on. Sags to ~97 steps/s in a pathological all-robots-colliding scrimmage. Atlantis measures ~250 steps/s. | README, ONBOARDING |
 
@@ -75,19 +78,21 @@ days, **L** ≥ 4 days.
 
 ### The recruit's day-one loop
 
-Nothing here works today. `python -m tbots.rl.train` raises
-`NotImplementedError`, and ONBOARDING §1.6 onward is a preview, not a
-walkthrough. **This cluster of tasks is the single largest risk to
-recruitment** and should be scheduled first.
+`python -m tbots.rl.train` still raises `NotImplementedError`, and ONBOARDING
+§1.6 onward is still a preview rather than a walkthrough. **This cluster
+remains the single largest risk to recruitment.** Two of its members closed on
+2026-09-04, and the shape of what is left changed: the loop is now blocked on
+**TASK-050** (the env) and **TASK-056** (the trainer), with everything else
+either done or downstream of those two.
 
 | ID | Task | Size | Notes |
 |---|---|---|---|
-| **TASK-006** | **Config loader — make `configs/` mean something** | M | **New.** Nothing in `src/` reads a single YAML file today: `grep -r "yaml\|hydra\|OmegaConf" src/tbots` returns nothing. `hydra-core` is a declared dependency with zero consumers. Every port is a Python default in a constructor signature, and `configs/net/{dev,competition}.yaml` have no reader at all. Also: `configs/` is not laid out as a Hydra config tree — there is no root `config.yaml` and no `defaults:` list anywhere, so `env=div_b_6v6 reward=example` cannot compose yet. This blocks TASK-056 and is the real fix for the 10006-vs-10020 vision-port workaround. |
-| **TASK-050** | `rl/envs/skill_env.py` — single-robot skill training env | M | Subclass `SSLEnv` (already written): define obs/action spaces, `_observe`, `_decode`, `_terminated`, and scenario sampling. Recruits cannot train anything without it. Does **not** need TASK-053 — a flat observation is fine here; the permutation-invariant encoder is a tactics-layer concern. |
+| **TASK-006** | **Config loader — make `configs/` mean something** | S (was M) | **Half landed 2026-09-04.** The training half is done: `configs/config.yaml` composes `env` / `reward` / `train`, and `rl/train.py` reads it. **What is left is the network half.** `configs/net/{dev,competition}.yaml` still have no reader, every port is still a constructor default, and `backend.kind: rsim` in `div_b_6v6.yaml` still dispatches to nothing. That remainder is the real fix for the 10006-vs-10020 vision-port workaround, and it is candidate C from the architecture review — an `open_backend(cfg) -> Backend` module, not a second YAML parser. |
+| **TASK-050** | `rl/envs/skill_env.py` — single-robot skill training env | M | Subclass `SSLEnv` (already written): define obs/action spaces, `_observe`, `_decode`, `_terminated`, and scenario sampling. Recruits cannot train anything without it. Does **not** need TASK-053 — a flat observation is fine here; the permutation-invariant encoder is a tactics-layer concern. **Now also blocks half of TASK-054:** `DomainRandomization` deliberately refuses to guess observation-vector offsets and raises unless the env exposes `randomize_observation(obs, rng, position_noise_m, angle_noise_rad, dropout_probability)`. Nothing in `src/` provides that yet — only the test's own stub env. Ship it as part of this task, or `configs/env/div_b_6v6.yaml`'s noise and dropout settings stay inert. |
 | **TASK-052** | `rl/envs/synthetic_referee.py` | M | Produces `GameState` from rSim ground truth (out of bounds, goals, fouls) so training does not need the real GC in the loop. |
-| **TASK-054** | `rl/wrappers/domain_rand.py` | M | Latency, detection noise, dropouts. **Note the trap:** `configs/env/div_b_6v6.yaml` already ships `domain_randomization.enabled: true` with tuned parameters, referencing a wrapper that does not exist. Once TASK-006 lands and configs are actually read, that config will fail loudly — which is the correct outcome, but schedule these two together. |
-| **TASK-056** | `rl/train.py` — the Hydra entry point | **L** | The command recruits run on day one. Depends on TASK-006, 050, 052, 054. Must produce exactly what ONBOARDING §1.6's verify step promises: `runs/NAME/{latest.pt, config.yaml, events.out.tfevents.*}`. |
-| **TASK-059** | **Checkpoint / resume + run manifest** | S–M | **New; split out of TASK-056 so it cannot be quietly skipped.** `docs/SETUP.md` §17.2 and ONBOARDING's Atlantis job script both pass `train.resume_from=…`, and ARCHITECTURE §8 says checkpoint-and-resume "is not optional — write it in week one, not the week you first lose a twelve-hour job." Atlantis walltime is 12 h. Also writes `runs/NAME/config.yaml` recording what actually ran, which ONBOARDING's "I changed a config and nothing changed" debugging recipe depends on. |
+| **TASK-054** | `rl/wrappers/domain_rand.py` | S (was M) | **Transport half DONE 2026-09-04.** Command and vision latency are real, sampled per episode and converted to ticks against `backend.dt`. **Two things remain, neither in this file:** (a) the semantic half — position noise, angle noise, dropouts — is delegated to the env's `randomize_observation`, which does not exist yet (see TASK-050); (b) nothing constructs the wrapper from config, so `domain_randomization.enabled: true` is still inert. The delegation is a good call, not a shortcut: a wrapper that guessed observation offsets would corrupt the vector silently the first time anyone reordered it. |
+| **TASK-056** | `rl/train.py` — the Hydra entry point | **L** | **Scaffolding landed 2026-09-04; the trainer itself is untouched and this is still the single biggest gap.** `main()` composes config and writes the run manifest, then raises with an honest message: *"No PPO or other RL algorithm exists in this repository."* Still needed: the learning algorithm, the env construction that wires TASK-050/052/054 together, TensorBoard/W&B logging, and a step loop that calls `artifacts.save_checkpoint` on `train.checkpoint_interval_steps`. **An unmade decision blocks the start:** `pyproject.toml`'s `train` extra pins `torch`, `wandb`, `tensorboard` and no RL library, so somebody must choose — write PPO ourselves, or add a dependency (stable-baselines3, CleanRL, torchrl). SETUP.md §8 forbids new dependencies without a decision; make it deliberately and record it. Must end up producing exactly what ONBOARDING §1.6 promises: `runs/NAME/{latest.pt, config.yaml, events.out.tfevents.*}`. |
+| **TASK-059** | **Checkpoint / resume + run manifest** | — | **DONE 2026-09-04.** `rl/artifacts.py` writes the resolved config and saves/loads checkpoints atomically, with a `format_version` and metadata validation so a resume against a changed config fails loudly instead of silently training the wrong thing. Splitting this out of TASK-056 worked exactly as intended — it landed while the trainer did not. Nothing calls `save_checkpoint` yet; that is TASK-056's step loop, not a gap here. |
 | **TASK-058** | `apps/eval.py` — load a checkpoint and play it | M | **New.** Referenced four times in ONBOARDING (§1.6, §1.7 twice, cheat sheet) and it does not exist anywhere in the tree — it was assumed into existence by the prose and was never a tracked deliverable. This is the "watch your policy play" payoff step; without it §1.7 has no ending. `--checkpoint … --render vision --realtime`. |
 | **TASK-007** | Wire up the skill registry | **S** | **New.** `src/tbots/skills/__init__.py` is empty, so no skill module is ever imported and `skill_names()` returns `[]` — verified. ONBOARDING's cheat sheet tells recruits to run exactly that command. Worse, `build_skill("go_to_point")` raises `KeyError`, so the "drop a trained policy into the match stack by editing one config line" story cannot work. Mirror what `rl/rewards/__init__.py` already does correctly. Add a test asserting the registry is non-empty and round-trips. |
 | **TASK-041** | `tactics/scripted.py` — baseline opponent | M | Nothing is evaluable without something to play against. Good candidate to hand to the first strong recruit *if* it slips, but do not let it slip past week two of fall. |
@@ -96,7 +101,7 @@ recruitment** and should be scheduled first.
 
 | ID | Task | Size | Notes |
 |---|---|---|---|
-| **TASK-003** | CI builds the same ODE developers have | S | **New — fixed 2026-08-25, needs one green run to close.** `.github/workflows/ci.yml` was missing `libccd-dev` and used the pre-fix cache key, so CI was building ODE against its *bundled* libccd while every dev box uses the system one — a physics divergence no test would catch. SETUP_LOG records this as fixed, but it was only fixed in SETUP.md's printed copy of the workflow, never in the workflow file itself. Now corrected, with an `ldd … \| grep libccd` gate and cache key `ode-0.16.2-double-sysccd-*`. **The next CI run rebuilds ODE from source (several minutes) — that is expected.** Remaining divergence, deliberately not chased: dev boxes configure with `--disable-asserts`, CI does not. Asserts abort on invalid state rather than changing physics, so this is a note, not a defect. |
+| **TASK-003** | CI builds the same ODE developers have | — | **DONE 2026-08-25, confirmed green 2026-09-04.** `.github/workflows/ci.yml` was missing `libccd-dev` and used the pre-fix cache key, so CI was building ODE against its *bundled* libccd while every dev box uses the system one — a physics divergence no test would catch. SETUP_LOG had recorded this as fixed, but only SETUP.md's printed copy of the workflow was ever corrected. Now fixed in the workflow itself, with an `ldd … \| grep libccd` gate and cache key `ode-0.16.2-double-sysccd-*`. Evidence it took effect: that push ran **1m50s** against ~45s for every run before and after it — the one-time rebuild the key bump forces — and passed. Remaining divergence, deliberately not chased: dev boxes configure with `--disable-asserts`, CI does not. Asserts abort on invalid state rather than changing physics, so this is a note, not a defect. |
 | **TASK-004** | CI guards the four rSim facts | S | **New.** Everything in `backends/rsim.py` rests on `field_type=1`, strides 5/11, `ACTION_LEN=8`. A fork bump can change any of them and **nothing would fail**: `setActions()` indexes an unchecked `std::vector`, so a wrong-length action reads past the end and feeds garbage to the kicker rather than raising. Today `tests/test_rsim_backend.py::test_state_length_matches_constants` contains no assertion at all — it passes by not raising. Make it assert, add a test pinning the four facts, and run `scripts/verify_rsim.py` in CI. |
 | **TASK-005** | Verify the macOS path end to end | M | **New.** ARCHITECTURE calls macOS "first-class" and the team is split WSL2/macOS, but **no part of Step 1M has ever been executed** — not by the build, not by CI (`runs-on: ubuntu-24.04` only). Homebrew ODE, the loopback multicast route, the native-binary workflow, and the arm64/x86_64 checks are all untested claims. If a single recruit shows up with a Mac and §1.1 fails, we lose them on day one. Needs a real Mac and a real afternoon. |
 | **TASK-008** | Fresh-clone rehearsal by someone who did not build this | M | **New.** Every green gate so far was run on the machine the stack was built on, by the process that built it. `docs/SETUP_LOG.md` is a catalogue of things the docs asserted that reality contradicted — stale env IDs, 404 asset URLs, an `ldd` invoked on a `.py` file, a silently broken editable install. Have a second person clone to a clean machine and do ONBOARDING §1.1–1.5 with a timer and a notebook. Every stumble is a doc bug. |
@@ -163,8 +168,21 @@ these are excellent first assignments for recruits.
 
 ## 6. What changed on this board, and why
 
-For anyone comparing against the version previously at the end of
-`docs/SETUP.md`:
+### Since the board was written (2026-09-04)
+
+`754a7a1` closed **TASK-013** by extracting Rule 3 into `core/perspective.py`,
+verified against live game-controller packets. `a81721e` closed **TASK-059**,
+closed the transport half of **TASK-054**, and landed the training half of
+**TASK-006**. Its commit message says "Completed tasks 054, 056, 059";
+**TASK-056 is not complete** — `rl/train.py` composes config and writes the run
+manifest, then raises, because no RL algorithm exists in the repo yet. The code
+says so plainly in its own error message; only the commit message overstates it.
+
+Net effect on the critical path: the day-one loop is now blocked on
+**TASK-050** and **TASK-056** rather than on five tasks. Those two are the
+whole remaining distance between a recruit and a trained policy.
+
+### Against the original board at the end of `docs/SETUP.md`
 
 **Closed:** TASK-001 and TASK-002, both fully verified. TASK-002 was called
 "the highest-risk item in the whole project" and it landed without the 3.10
@@ -207,13 +225,16 @@ keys it activates, not before them.
 
 In order. Everything else can slip a week; these cannot.
 
-1. **TASK-006** — config loader. Every other RL task composes through it.
-2. **TASK-050 + TASK-056** — an env and a trainer. This is the day-one loop.
-3. **TASK-058 + TASK-059** — see your policy, keep your policy.
+1. **TASK-050** — the skill env. It is now the keystone: the trainer needs it,
+   and so does half of domain randomisation.
+2. **TASK-056** — the trainer. Decide the algorithm question first; that
+   decision is currently what the task is waiting on, not the code.
+3. **TASK-058** — `apps/eval.py`. Without it a recruit can train a policy and
+   never watch it play, which is the half of day one that makes them care.
 4. **TASK-060 + TASK-061** — make Atlantis reproducible from a clone before
    more people depend on the one hand-built checkout.
-5. **TASK-008** — one fresh-clone rehearsal by someone else. Cheapest
-   possible insurance against losing a recruit in their first four hours.
+5. **TASK-008** — one fresh-clone rehearsal by someone else. Cheapest possible
+   insurance against losing a recruit in their first four hours.
 
 TASK-005 (macOS) is the wildcard: zero cost if nobody brings a Mac, and a
 day-one blocker for every recruit who does. Find out which before October.
