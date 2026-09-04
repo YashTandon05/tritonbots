@@ -689,21 +689,23 @@ order of difficulty:
 
 ### The pattern for a learned skill
 
-You do not write a special class. You write a **training environment** for the skill and let `LearnedSkill` wrap the checkpoint:
+You do not write a special class. You write a **task** and let `LearnedSkill` wrap the checkpoint:
 
-1. Add a scenario generator in `src/tbots/rl/envs/skill_env.py` (initial positions, randomised).
-2. Add reward terms in `src/tbots/rl/rewards/`.
-3. Add an observation builder in `src/tbots/rl/obs/builders.py`.
-4. Train.
-5. Register it in config: `skills: {dribble: {kind: learned, checkpoint: checkpoints/dribble_v7.pt}}`.
+1. `python -m tbots.rl.new_task dribble`. This writes `src/tbots/rl/tasks/dribble.py` with every hook stubbed and documented, a reward YAML, and a test.
+2. Fill in the hooks: a scenario sampler (initial positions, randomised), a success predicate, a failure predicate, and which observation builder and action codec to use.
+3. Write reward terms in `src/tbots/rl/rewards/` and list them in the YAML.
+4. `python -m tbots.rl.train env=skill task=dribble`.
+5. Register it in config: `skills: {dribble: {kind: learned, checkpoint: runs/dribble/latest.pt}}`.
 
 That last line is the whole payoff of the interface. You trained something on Tuesday; on Wednesday it is running in the match stack, and no caller changed.
+
+Two rules about the pieces you name in step 2. An observation builder or codec is **immutable once any checkpoint exists**: if you need a different layout, register a new name. And no builder may encode the robot's ID number. Your skill trains as robot 0 and may play as robot 7.
 
 ### Two constraints on anything you train
 
 **It runs on CPU, in under a millisecond.** At 60 Hz you have 16.6 ms for *all six robots* plus perception plus networking. Also, the virtual tournament runs team software in a container without root, and using a GPU requires asking the technical committee in advance. Assume CPU. Keep policies to a few hundred thousand parameters and export to TorchScript.
 
-**Train with domain randomisation on.** rSim hands you perfect, instantaneous, noiseless state. Real vision is 20–40 ms stale, noisy, and occasionally drops frames — at 3 m/s that latency alone is 15 cm of error. `configs/env/div_b_6v6.yaml` has a `domain_randomization` block. **Do not turn it off to make your numbers look better.** A policy that only works on perfect state is a policy that does not work.
+**Train with perception on.** rSim hands you perfect, instantaneous, noiseless state. Real vision is 20 to 40 ms stale, noisy, and occasionally drops frames. At 3 m/s that latency alone is 15 cm of error. The env config has a `perception.mode` key with three values: `truth` (debugging only), `noisy` (delay, noise, dropouts), and `tracked` (the same tracker a match uses). **Anything you intend to export must be trained in `tracked`.** Do not switch to `truth` to make your numbers look better. A policy that only works on perfect state is a policy that does not work.
 
 ### Also this week
 
@@ -733,24 +735,15 @@ This only works because the layers below it are solid. That is why you spent wee
 
 ### The environment shape
 
-`src/tbots/rl/envs/tactics_env.py` is an **options wrapper**: one `env.step()` runs many backend ticks until a skill terminates.
+`src/tbots/rl/envs/tactics_env.py` is an **options wrapper**: one `env.step()` is one tactics decision, and one decision covers 15 physics ticks.
 
-```python
-def step(self, action):
-    skills = {a.robot_id: build_skill(a.skill.name, **a.skill.kwargs)
-              for a in self.decode(action)}
-    total, inner = 0.0, 0
-    while inner < self.max_skill_ticks:
-        cmds = [s.step(self.world, rid) for rid, s in skills.items()]
-        self.world = self.backend.step(cmds)      # 1/60 s of physics
-        total += self.reward_fn(self.world, self.prev)
-        inner += 1
-        if any(s.status() != "running" for s in skills.values()):
-            break
-    return self.obs(), total, self.terminated(), False, {}
-```
+The tactic decides four times a second. At each decision it says, for every robot, "run this skill with these arguments". For the next 15 ticks the skills run at 60 Hz, and the reward from those 15 ticks is summed into one RL step. If the next decision assigns the same skill to a robot, that robot keeps its existing skill object and its internal state. If the assignment changes, the old object is discarded and a new one built. A skill that finishes early leaves its robot stopped until the next decision, at most 250 ms away.
 
-**Note that reward accumulates over the inner loop.** This is non-obvious and important: shaping terms should be integrated at physics rate, not sampled once per macro-step. Sample once and your signal is mostly noise about where the skill happened to terminate.
+The loop that does this is not in the env. It is the `Coach` (`src/tbots/tactics/coach.py`), which owns the tactic, the live skills, role assignment and restarts, and is the same object a match runs at realtime. The env just calls it 15 times per step and adds up the reward.
+
+**Reward accumulates over the inner loop.** This is non-obvious and important: shaping terms are integrated at physics rate, not sampled once per decision. Sample once and your signal is mostly noise about where the skill happened to be when the decision landed.
+
+The Coach also carries a rule filter below the tactic: it stops every robot on HALT, keeps them 0.5 m from the ball during a stop, out of the defense areas, and so on. A learned tactic cannot commit a positional foul, so you never have to shape a reward to prevent one.
 
 ### Observations must be permutation-invariant
 
@@ -762,17 +755,17 @@ This also gives you curriculum learning for free, which brings us to:
 
 ### Curriculum learning
 
-**Yes, you can train on 2v2.** rSim takes robot counts as constructor arguments, and `RSimBackend.reconfigure(n_us, n_them)` changes them between stages. See `configs/train/curriculum_example.yaml`.
+**Yes, you can train on 2v2.** A curriculum is a sequence of training runs. Each run has a fixed robot count (`env.n_us=2 env.n_them=2`) and starts from a checkpoint you chose (`train.resume_from=runs/one_v_one/latest.pt`). Promotion to the next stage is a human decision: look at the eval report, watch a few recorded episodes, and decide. There is no automatic promotion rule. `configs/train/curriculum_example.yaml` documents a recommended stage order.
 
 Two rules if you use it:
 
-**The observation vector must be a fixed size across every stage.** If 2v2 gives you 18 floats and 6v6 gives you 54, nothing transfers and the curriculum is decorative. Either pad to `max_robots` with a validity mask, or use the set encoder (which handles variable N natively — another reason to build it).
+**The observation vector must be a fixed size across every stage.** If 2v2 gives you 18 floats and 6v6 gives you 54, stage 2 cannot resume from stage 1 and the curriculum is decorative. Either pad to `max_robots` with a validity mask, or use the set encoder (which handles variable N natively, another reason to build it).
 
 **Never shrink the field for easier stages.** A 2v2 stage runs on the full 9 × 6 m Division B pitch. Keeping geometry constant is precisely the mechanism by which the easy stage teaches something true about the hard one. Shrink the pitch and you have taught your policy about a game that does not exist.
 
 ### Self-play
 
-Build against `env.set_opponent(policy)` from the start, even while the default is `ScriptedTactic()`. Retrofitting an opponent pool into an environment that assumed a static adversary is a multi-day refactor nobody enjoys.
+The opponent is its own Coach running on the flipped world (`as_opponent(world)` in `core/perspective.py`, Rule 3 applied once more) and it sees ground truth. Opponents are sampled uniformly from a pool of frozen checkpoints that always includes `ScriptedTactic()`; `opponent=scripted` or `opponent.checkpoint=runs/x/latest.pt` pins one for a run. This plumbing exists from the start, even while the only opponent is the scripted one, because retrofitting a pool into an environment that assumed a static adversary is a multi-day refactor nobody enjoys.
 
 ---
 
@@ -825,7 +818,7 @@ make fmt && make lint && make test
 | Stop the stack | `docker compose down` |
 | See what's running | `docker compose ps` |
 
-Hydra lets you override any config key from the command line with dots: `train.num_envs=64`, `env.n_us=2`, `env.domain_randomization.enabled=false`.
+Hydra lets you override any config key from the command line with dots: `train.num_envs=64`, `env.n_us=2`, `env.perception.mode=noisy`.
 
 ---
 

@@ -77,6 +77,16 @@ difference against. `RSimBackend._observe()` satisfies this as long as it is
 called exactly once per `step()` — do not add extra `get_state()` calls for
 logging or rendering.
 
+**5. The timestep is an integer number of milliseconds.** The pybind11
+binding is `SSL(fieldType, nBlue, nYellow, timeStep_ms: int, ...)` and the
+wrapper divides by 1000.0 before handing it to `SSLWorld`. Passing
+`int(round(1/60 * 1000))` gives 17, so physics advances 17 ms per step
+(58.8 Hz) while `RSimBackend._t` advances 1/60 s. Velocities in the state
+array are still correct (they are divided by the same 0.017), but simulated
+time drifts 2% from the reported time and the control rate is not 60 Hz.
+Found 2026-09-04 in the architecture review. TASK-070 adds a `double`
+seconds overload to our fork so the backend can pass `dt` through exactly.
+
 ## Smaller quirks
 
 - A heading of exactly 0 is reported as **360.0**, not 0.0. `getDir()` ends
@@ -234,4 +244,5 @@ SUMMARY
   state angles / poses    = degrees, heading in (0, 360], vdir in deg/s
   commanded vangular      = radians/second   <-- asymmetric, mind this
   get_state()             = must be called exactly once per step()
+  timestep                = int milliseconds; 1/60 s becomes 17 ms (see trap 5)
 ```
