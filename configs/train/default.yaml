@@ -1,0 +1,5 @@
+total_steps: 200000
+num_envs: 1
+run_dir: runs/default
+resume_from: null
+checkpoint_interval_steps: 10000

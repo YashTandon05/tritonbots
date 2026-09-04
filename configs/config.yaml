@@ -1,0 +1,14 @@
+defaults:
+  - env: div_b_6v6
+  - reward: example
+  - train: default
+  - _self_
+
+# Keep Hydra from changing into an implementation-specific output directory.
+# Training artifacts are owned explicitly by train.run_dir.
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
