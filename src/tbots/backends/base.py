@@ -35,9 +35,9 @@ class Scenario:
     Ball is (x, y, vx, vy).
     """
 
-    ball: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
-    us: tuple[tuple[float, float, float], ...] = ()
-    them: tuple[tuple[float, float, float], ...] = ()
+    ball: BallPlacement = (0.0, 0.0, 0.0, 0.0)
+    us: tuple[Pose, ...] = ()
+    them: tuple[Pose, ...] = ()
     seed: int | None = None
 
     @staticmethod
@@ -115,7 +115,10 @@ class SimBackend(Backend, Protocol):
         our robot 2. An unknown `robot_id` raises `ValueError`.
 
         Robot placements carry no velocity, and that is not an oversight: rSim
-        cannot express one. See `RSimBackend.place` for what that costs.
+        cannot express one, so every robot on the field stops. The ball keeps
+        the velocity you give it, minus whatever the backend's teleport costs.
+        Read `RSimBackend.place` before using this in a loop -- it is cheap in
+        wall-clock terms and not free in physics.
         """
         ...
 

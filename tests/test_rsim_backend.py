@@ -210,9 +210,18 @@ def test_place_before_reset_raises(duel):
         duel.place(ball=(0.0, 0.0, 0.0, 0.0))
 
 
-def test_reconfigure_is_gone(duel):
-    """Robot counts are fixed for a run. TASK-041 and TASK-055 rely on it."""
+def test_robot_counts_are_fixed_for_the_run(duel):
+    """TASK-041 and TASK-055 rely on the counts not moving mid-run.
+
+    Asserting `reconfigure` is merely absent would pass forever if someone
+    reintroduced the same power under another name, so pin the invariant it
+    threatened: the counts are readable and there is no way to set them.
+    """
+    assert (duel.n_us, duel.n_them) == (1, 1)
     assert not hasattr(duel, "reconfigure")
+    for attr in ("n_us", "n_them"):
+        with pytest.raises(AttributeError):
+            setattr(duel, attr, 3)
 
 
 def test_rsim_is_a_sim_backend(duel):
@@ -237,3 +246,48 @@ def test_a_match_only_backend_is_not_a_sim_backend():
 
     assert isinstance(MatchOnly(), Backend)
     assert not isinstance(MatchOnly(), SimBackend)
+
+
+def test_place_keeps_the_ball_rolling(duel):
+    """Two `place()` calls in a row used to stop the ball dead.
+
+    `place()` sources anything the caller did not name from the last observed
+    frame -- and it then overwrote that frame with the post-reset read, in
+    which every velocity is zero (docs/RSIM_FACTS.md trap 4). The second call
+    read its own zero back out and placed a stationary ball. Nothing raised;
+    the ball simply stopped.
+    """
+    rolling = Scenario(ball=(0.0, 0.0, 2.0, 0.0), us=((-2.0, -2.0, 0.0),),
+                       them=((2.0, 2.0, 0.0),))
+    duel.reset(rolling)
+    for _ in range(10):
+        w = duel.step([])
+    assert w.ball.vx > 1.0, "precondition: the ball is rolling"
+
+    w = duel.place()
+    assert w.ball.vx > 1.0, "the frame place() returns must not claim it stopped"
+    duel.place()
+    duel.place()
+
+    assert duel.step([]).ball.vx > 1.0, "three places should not stop the ball"
+
+
+def test_place_costs_the_ball_a_little_speed(duel):
+    """Each place() runs rSim's settling loop, and the ball pays for it.
+
+    A fixed ~0.09 m/s, not a percentage -- measured identical at 1, 2 and
+    4 m/s. Pinned so that if a future rSim change makes place() free, or much
+    more expensive, we find out here rather than in a reward curve.
+    """
+    rolling = Scenario(ball=(0.0, 0.0, 2.0, 0.0), us=((-2.0, -2.0, 0.0),),
+                       them=((2.0, 2.0, 0.0),))
+    speeds = []
+    for do_place in (False, True):
+        duel.reset(rolling)
+        for _ in range(10):
+            duel.step([])
+        if do_place:
+            duel.place()
+        speeds.append(duel.step([]).ball.vx)
+    control, placed = speeds
+    assert 0.02 < control - placed < 0.20

@@ -115,6 +115,18 @@ constructor was used — assert against it rather than recomputing.
 - `step()` internally substeps 5 times at `timeStep * 0.2`.
 - `reset()` tears down and reconstructs the whole `SSLWorld`; it is not cheap,
   and it resets the velocity-differencing baseline.
+- **`reset()` also costs a rolling ball a fixed ~0.09 m/s.** The `SSLWorld`
+  constructor ends with `for (i = 0; i < 30) physics->step(timeStep * 0.1)` —
+  a settling loop worth three whole timesteps — and the ball rolls against
+  friction throughout it. Measured 2026-09-07: the loss is 0.091 m/s at 1, 2
+  and 4 m/s alike, so it is an absolute penalty and not a percentage —
+  24% of a 0.5 m/s roll, 3% of a 4 m/s one. Positions are unaffected to
+  within a micrometre. This matters because `RSimBackend.place()` is built on
+  `reset()`, so every teleport pays it; see `backends/rsim.py`.
+- **`reset()` takes robot POSES only** — `[x, y, dir]`, no velocity — and
+  `ballPos` is `[x, y, vx, vy]`, with no `z` or `vz`. So a reset stops every
+  robot dead, and drops a chipped ball to the ground. Neither is expressible
+  through this API.
 - Field params available from `get_field_params()`: `length`, `width`,
   `penalty_length`, `penalty_width`, `goal_width`, `goal_depth`,
   `ball_radius`, `rbt_radius`, `rbt_wheel_radius`, `rbt_motor_max_rpm`,

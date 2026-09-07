@@ -46,9 +46,9 @@ target-version = "py311"
 #
 # Deliberately excluded: RUF and FURB. Both are opinionated and churny, and the
 # only two findings they produced against this codebase were noise --
-# `int(round(...))` in backends/rsim.py (redundant, but it is transcribed from
-# docs/SETUP.md and reads as intentional), and RUF012 on SSLEnv.metadata, which
-# is the Gymnasium convention and is typed as a plain dict by gym.Env itself.
+# `int(round(...))` in backends/rsim.py (removed by TASK-070; the timestep is a
+# float now), and RUF012 on SSLEnv.metadata, which is the Gymnasium convention
+# and is typed as a plain dict by gym.Env itself.
 [tool.ruff.lint]
 select = [
   "E",    # pycodestyle errors
@@ -59,6 +59,23 @@ select = [
   "B",    # flake8-bugbear — real bug patterns
   "C4",   # flake8-comprehensions
 ]
+
+# mypy needs to be told where the package lives. Without `mypy_path`, checking
+# a file that imports `tbots` from outside src/ resolves nothing: the editable
+# install is a .pth, which mypy does not execute. Combined with
+# --ignore-missing-imports that fails SILENTLY -- every tbots name becomes Any
+# and the check passes having verified nothing. Found the hard way on
+# 2026-09-07; see docs/SETUP_LOG.md, TASK-072.
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+
+# robosim is our compiled pybind11 extension. It ships no stubs and no
+# py.typed marker, and it is the ONLY import we silence -- deliberately
+# narrow, so a genuinely missing dependency still fails.
+[[tool.mypy.overrides]]
+module = ["robosim", "robosim.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

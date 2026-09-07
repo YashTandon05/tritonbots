@@ -1665,3 +1665,128 @@ Notes:        - `place()` STOPS EVERY ROBOT ON THE FIELD, including ones
                 paragraph carry "Superseded 2026-09-07" notes in the style of
                 9.3. Its design points (a) and (b) — fixed observation size,
                 constant field geometry — survive the change and are kept.
+
+## TASK-072 (follow-up) — review findings fixed   [PASS]
+Verification: `pytest -q` -> 52 passed, 1 skipped. `make lint` clean, and it
+              now type-checks the backends as well as `core`.
+
+              *** A REAL BUG, FOUND BY REVIEW AND NOT BY ME. ***
+              TWO `place()` CALLS IN A ROW STOPPED THE BALL DEAD.
+              `place()` sources anything the caller did not name from
+              `self._last`, and then overwrote `self._last` with its own
+              post-reset observation — in which every velocity reads zero,
+              which is the trap its own docstring documented two lines above.
+              The second call read that zero back out and placed a stationary
+              ball. Nothing raised. Reproduced before the fix:
+
+                rolling ball                    vx = 1.3165
+                place, step                     vx = 1.2135
+                place, place, step               vx = 0.0000   <- dead
+
+              Exactly the defect class TASK-072 existed to fix, reintroduced
+              one method over. Fixed by writing the placed velocity back over
+              the post-reset read: the robots really are stopped, so zero is
+              true for them, but for the ball it is a lie we can correct
+              exactly, because we are the ones who just set it. After:
+
+                place, place, place, step        vx = 1.2135   (was 0.0000)
+
+              and two places now cost no more than one, because the second
+              re-places the value recorded before the first settling loss.
+              `test_place_keeps_the_ball_rolling` pins it.
+
+              *** A SECOND MEASUREMENT THE REVIEW PROMPTED. ***
+              Every `place()` costs a rolling ball a FIXED ~0.091 m/s, even
+              when the ball is not the thing being placed:
+
+                0.5 m/s -> lost 24.2%      2.0 m/s -> lost 7.0%
+                1.0 m/s -> lost 15.5%      4.0 m/s -> lost 3.3%
+
+              An absolute penalty, not a percentage — the same 0.091 m/s
+              every time. Cause: `SSLWorld`'s constructor ends with
+              `for (i = 0; i < 30) physics->step(timeStep * 0.1)`, a settling
+              loop worth three whole timesteps, and the ball rolls against
+              friction throughout it. Positions survive to within a
+              micrometre. Recorded in `docs/RSIM_FACTS.md` because it is a
+              property of rSim's `reset()`, not of our wrapper, and pinned by
+              `test_place_costs_the_ball_a_little_speed` so that a future rSim
+              change shows up here rather than in a reward curve. It is a real
+              constraint on TASK-052's restarts: placing the ball for a free
+              kick at walking pace loses a quarter of its speed.
+
+              Ball `z`/`vz` are also dropped by any placement — `ballPos` is
+              `[x, y, vx, vy]` and has nowhere to put them, so a chipped ball
+              lands the moment you place it. Documented, not fixable here.
+
+Deviations:   None beyond the review's own findings.
+
+Notes:        Acted on, from the two review axes:
+
+              - `mypy` NOW RUNS ON THE BACKENDS IN CI. The review's sharpest
+                structural point: TASK-072's stated purpose is that "the type
+                checker stops anyone pointing a training run at hardware", but
+                `make lint` ran `mypy src/tbots/core` only, so CI never checked
+                the file where that is enforced. The guarantee was a comment.
+                `make lint` now covers `core`, `backends` and
+                `rl/envs/base.py`, and `pyproject.toml` grew its first
+                `[tool.mypy]` section: `mypy_path = "src"` plus a narrow
+                `ignore_missing_imports` override for `robosim` alone (it is a
+                compiled extension with no stubs; nothing else is silenced).
+                VERIFIED BY BREAKING IT ON PURPOSE — assigning a
+                `NetworkBackend` to a `SimBackend` makes `make lint` exit 1
+                with "missing following SimBackend protocol members: place,
+                set_game_state", and it goes green again on revert.
+
+              - `SETUP.md` Step 0's **Rule 2** still read "Both implement the
+                same `Backend` protocol", contradicting its own §9.1 and the
+                shipped code. Amended in place with a dated note.
+                *** CLAUDE.md §7 rule 2 QUOTES THAT SENTENCE VERBATIM AND IS
+                NOW STALE. Left for a human: it is the working agreement that
+                governs the build, and a build agent should not quietly edit
+                the document that constrains it. ***
+
+              - `_slot()` renamed `_checked_id()`. It validated an id and
+                returned it unchanged while the caller did the slot
+                arithmetic, so the name promised something it did not do.
+
+              - `Scenario` now uses the `Pose` / `BallPlacement` aliases
+                introduced five lines above it, instead of respelling the same
+                tuple shapes by hand.
+
+              - `test_reconfigure_is_gone` became
+                `test_robot_counts_are_fixed_for_the_run`. Asserting an
+                absence would have passed forever if the same power came back
+                under a different name; it now asserts the invariant that was
+                actually at stake — the counts are readable and cannot be set.
+
+              - The stale ruff note in `pyproject.toml` citing
+                `int(round(...))` in `backends/rsim.py` was corrected; TASK-070
+                deleted that line.
+
+              Considered and declined, with reasons:
+
+              - A `Team` type to absorb the `(n, side)` pair travelling through
+                `_checked_id` and `_poses`. Two private helpers in one file is
+                thin justification for a new concept.
+
+              - Making the tests stop reaching `backend._sim.time_step`. That
+                gate is white-box on purpose: it asserts we passed `dt` through
+                to the simulator, which has no public expression that would not
+                be invented solely for the test.
+
+              - "Speculative generality" on `backend: SimBackend`. It is a
+                restriction, not a generality, and it is load-bearing today:
+                `SSLEnv(NetworkBackend(...))` is a type error now, which is
+                precisely what ARCHITECTURE.md asks the split to buy.
+
+              Rejected on the facts:
+
+              - The spec review called the SETUP.md §9.1 changes
+                (`typing.Sequence` -> `collections.abc`, `-> "Scenario"` ->
+                `-> Scenario`) unrequested restyling against CLAUDE.md §8.
+                They are not. `git show 6d01e9a:src/tbots/backends/base.py`
+                already imports from `collections.abc`: the LIVE CODE had
+                diverged from SETUP.md's listing before this session, almost
+                certainly in the Step 15 ruff `UP` pass. Replacing the listing
+                wholesale brought the doc up to the code. No transcribed code
+                was reformatted.

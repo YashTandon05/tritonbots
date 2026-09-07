@@ -89,6 +89,16 @@ Everything else imports `core`. `core` defines the data types; it never depends 
 **Rule 2 — Two backends, one interface.**
 There is a training backend (rSim, runs in our Python process, very fast) and a match backend (a separate simulator, talks over UDP, realtime). Both implement the same `Backend` protocol. Nothing above the backend layer knows which one it's talking to.
 
+> **Amended 2026-09-07 (TASK-072).** The interface is now two protocols, and
+> the rule is sharper for it. `Backend` is still the one interface for
+> everything a match needs, and nothing above the backend layer distinguishes
+> rSim from ER-Force through it. `SimBackend` extends it with the three powers
+> only a simulator has — commanding the opposition, `place()`, and
+> `set_game_state()` — and code that needs those says so in its type. The
+> training environment takes a `SimBackend`, which is what makes "you cannot
+> train against real robots" a type error. See §9.1 and `docs/ARCHITECTURE.md`
+> §"`Backend` and `SimBackend`".
+
 **Rule 3 — We are always `us`, we always attack `+x`.**
 The world model has `us` and `them`, never `blue` and `yellow`. The backend flips coordinates if we are yellow or defending the positive half. Every skill, policy, and reward function is written as if we are blue attacking rightward. This eliminates an entire class of bug and halves what a policy has to learn.
 
@@ -1738,9 +1748,9 @@ class Scenario:
     Ball is (x, y, vx, vy).
     """
 
-    ball: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
-    us: tuple[tuple[float, float, float], ...] = ()
-    them: tuple[tuple[float, float, float], ...] = ()
+    ball: BallPlacement = (0.0, 0.0, 0.0, 0.0)
+    us: tuple[Pose, ...] = ()
+    them: tuple[Pose, ...] = ()
     seed: int | None = None
 
     @staticmethod
@@ -1818,7 +1828,10 @@ class SimBackend(Backend, Protocol):
         our robot 2. An unknown `robot_id` raises `ValueError`.
 
         Robot placements carry no velocity, and that is not an oversight: rSim
-        cannot express one. See `RSimBackend.place` for what that costs.
+        cannot express one, so every robot on the field stops. The ball keeps
+        the velocity you give it, minus whatever the backend's teleport costs.
+        Read `RSimBackend.place` before using this in a loop -- it is cheap in
+        wall-clock terms and not free in physics.
         """
         ...
 
@@ -1847,6 +1860,7 @@ about the referee. That is the network backend's job.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 import numpy as np
 import robosim
@@ -1994,11 +2008,25 @@ class RSimBackend(SimBackend):
            about this short of a new rSim entry point; it is why `place()` is
            for restarts and episode setup, not for nudging things mid-play.
 
-        2. THE RETURNED VELOCITIES ARE ALL ZERO, including the ball's. A reset
-           clears the baseline that `get_state()` differences against, so the
-           first read after it reports zero for everything (docs/RSIM_FACTS.md,
-           trap 4). The ball really is moving if you gave it a velocity; you
-           just cannot see it until the next `step()`.
+        2. THE BALL LOSES A FIXED ~0.09 m/s EVERY TIME, even if you did not
+           place it. rSim's reset runs a 30-substep settling loop before
+           handing the world back, and the ball rolls against friction
+           throughout it. Measured across speeds: the loss is 0.091 m/s
+           whether the ball was doing 1 m/s or 4, i.e. crippling at walking
+           pace and negligible at kick speed. Position is unaffected, to
+           within a micrometre. Do not call `place()` on a loop.
+
+        3. The reported velocities are honest, but they were not free. A reset
+           clears the baseline `get_state()` differences against, so the raw
+           read after it is zero for everything (docs/RSIM_FACTS.md, trap 4).
+           For the robots that IS the truth. For the ball it is not, so the
+           velocity we just placed is written back over it -- otherwise the
+           next `place()` reads that zero out of the cache and places a dead
+           ball. Two `place()` calls in a row did exactly that until
+           2026-09-07.
+
+        Ball `z` and `vz` are dropped: rSim's `ballPos` is `[x, y, vx, vy]` and
+        has nowhere to put them. A chipped ball lands the moment you place it.
 
         Simulated time does NOT rewind. `place()` happens during an episode;
         only `reset()` starts a new one.
@@ -2014,7 +2042,15 @@ class RSimBackend(SimBackend):
             self._poses(cur.us, self._n_us, us, "ours"),
             self._poses(cur.them, self._n_them, them, "theirs"),
         )
-        return self._observe()
+        world = self._observe()
+        # Put the ball's velocity back. See consequence 3 above: the raw read
+        # after a reset is zero for everything, which is true of the robots and
+        # false of the ball, and leaving it false is what let a second place()
+        # stop the ball dead.
+        self._last = replace(world,
+                             ball=replace(world.ball,
+                                          vx=ball_pos[2], vy=ball_pos[3]))
+        return self._last
 
     def set_game_state(self, game: GameState) -> None:
         """Injected by the environment or a SyntheticReferee. rSim itself
@@ -2044,8 +2080,8 @@ class RSimBackend(SimBackend):
             out.append([default_x * (1.0 + 0.3 * i), -2.5, 0.0])
         return out
 
-    def _slot(self, robot_id: int, n: int, side: str) -> int:
-        """Index of `robot_id` within one team, or ValueError.
+    def _checked_id(self, robot_id: int, n: int, side: str) -> int:
+        """`robot_id` back, or ValueError if that robot is not on `side`.
 
         Not a silent skip. An out-of-range id used to be dropped without a
         word, so a policy could spend a whole run commanding a robot that did
@@ -2061,7 +2097,7 @@ class RSimBackend(SimBackend):
                side: str) -> list[list[float]]:
         """One team's poses for a reset: `overrides` where given, else current."""
         for robot_id in overrides or ():
-            self._slot(robot_id, n, side)
+            self._checked_id(robot_id, n, side)
         out = []
         for i in range(n):
             if overrides is not None and i in overrides:
@@ -2079,9 +2115,9 @@ class RSimBackend(SimBackend):
         # how an uncommanded robot stands still.
         n = self._n_us + self._n_them
         acts = [[0.0] * ACTION_LEN for _ in range(n)]
-        pairs = [(c, self._slot(c.robot_id, self._n_us, "ours"))
+        pairs = [(c, self._checked_id(c.robot_id, self._n_us, "ours"))
                  for c in commands]
-        pairs += [(c, self._n_us + self._slot(c.robot_id, self._n_them, "theirs"))
+        pairs += [(c, self._n_us + self._checked_id(c.robot_id, self._n_them, "theirs"))
                   for c in opponent_commands]
         for c, slot in pairs:
             a = acts[slot]
