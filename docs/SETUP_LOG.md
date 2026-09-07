@@ -1828,3 +1828,27 @@ Notes:        - RULES 3 AND 4 KEEP THEIR NUMBERS. There is no Rule 2 now and
                 runs on rSim and ER-Force (`tests/test_backend_parity.py`). It
                 now lives only in `docs/ARCHITECTURE.md`
                 §"`Backend` and `SimBackend`", not in the rules list.
+
+## TASK-070 (addendum) — rSoccer verified against the new binding   [PASS]
+Verification: TASK-070 said "keep the int overload for rSoccer" and I had not
+              actually run rSoccer against the rebuilt extension — only
+              reasoned that it would work. Closed that gap:
+
+                SSLStaticDefenders-v0      30 steps ok, obs (24,)
+                SSLDribbling-v0            30 steps ok, obs (21,)
+                SSLContestedPossession-v0  30 steps ok, obs (14,)
+                SSLPassEndurance-v0        30 steps ok, obs (16,)
+                VSS-v0                     30 steps ok, obs (40,)
+
+              And it takes the path we intended, not by luck:
+              `rsoccer_gym/Simulators/rsim.py:169` calls `robosim.SSL(...)`
+              with `time_step_ms` positionally as an `int`, so it resolves to
+              the millisecond overload and its physics is bit-for-bit what it
+              was before. The four SSL envs are the ones that matter here;
+              VSS goes through the untouched `VSS` binding.
+
+Deviations:   None.
+
+Notes:        The named arguments added to the SSL constructor are backward
+                compatible for exactly this reason — every rSoccer call site is
+                positional.
