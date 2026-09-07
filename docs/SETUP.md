@@ -3150,7 +3150,7 @@ grSim's one real advantage is its 3D GUI — and **we already have a visualizer 
 ```bash
 docker pull roboticserlangen/simulatorcli:latest
 docker run --rm --network host \
-  -e GEOMETRY=2020 -e REALISM=RC2021 \
+  -e GEOMETRY=2020B -e REALISM=RC2021 \
   roboticserlangen/simulatorcli:latest
 ```
 
@@ -3158,7 +3158,7 @@ Three command-line options matter:
 
 | Option | Meaning |
 |---|---|
-| `-g <name>` | Initial geometry, from the defaults in `config/simulator` (e.g. `2020`) |
+| `-g <name>` | Initial geometry, from the defaults in `config/simulator`. **Use `2020B`** — we play Division B (9.0 x 6.0 m). `2020` is the Division A pitch (12.04 x 9.02 m) and does not match `core/geometry.py`'s `DIV_B`. |
 | `--realism <name>` | Realism profile from `config/simulator-realism` (e.g. `RC2021`, or `None` for idealised physics) |
 | `--localhost` | Send only to the local machine. **Always use this in development.** |
 
@@ -3172,7 +3172,7 @@ cd ~/code/tritonbots/third_party
 git clone --recurse-submodules https://github.com/robotics-erlangen/framework.git erforce
 cd erforce && mkdir -p build && cd build
 cmake .. && make simulator-cli -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
-./bin/simulator-cli -g 2020 --realism RC2021 --localhost
+./bin/simulator-cli -g 2020B --realism RC2021 --localhost
 ```
 
 Budget an hour on macOS. If it fights you, that is fine — do networked-backend work on a Linux or WSL machine instead. See the [platform matrix](#platform-support-matrix).
@@ -3228,7 +3228,7 @@ services:
     network_mode: host
     restart: unless-stopped
     environment:
-      GEOMETRY: "2020"
+      GEOMETRY: "2020B"      # Division B. "2020" is Division A -- see above.
       REALISM: "RC2021"
     # Reminder: this publishes vision on 10020, not 10006.
     # Set vision.port accordingly in configs/net/dev.yaml.

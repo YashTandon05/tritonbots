@@ -1361,3 +1361,78 @@ Notes:        *** THE RULEBOOK DOES NOT SAY WHAT WE ASSUMED, AND IT DOES NOT
               INDEXING. Same class of gap as domain randomisation (TASK-054),
               which normalises neither: training state is perfect and
               instantaneous, match state is tracked, noisy and 20-40 ms stale.
+
+## TASK-071 — Division B geometry in the compose stack   [PASS]
+Verification: `docker compose up -d` with `GEOMETRY: "2020B"`, then two
+              probes against the running stack.
+
+              (1) ON THE WIRE. Joined 224.5.23.2:10020 and decoded the first
+              `SSL_WrapperPacket` carrying `geometry`:
+
+                field_length         = 9000 mm
+                field_width          = 6000 mm
+                goal_width           = 1000 mm
+                goal_depth           =  180 mm
+                boundary_width       =  300 mm
+                n field_lines        = 12
+                n field_arcs         = 1   (CenterCircle, r = 500 mm)
+                n cameras (calib)    = 1
+                TopTouchLine                : (-4500, 3000) -> (4500, 3000)
+                LeftGoalLine                : (-4500,-3000) -> (-4500, 3000)
+                LeftPenaltyStretch          : (-3500,-1000) -> (-3500, 1000)
+                LeftFieldLeftPenaltyStretch : (-4500,-1000) -> (-3500,-1000)
+
+              That is 9.0 x 6.0 m with 1.0 m goals and a 1.0 x 2.0 m defense
+              area — `core/geometry.py`'s `DIV_B`, exactly, every field.
+              Before the change the same probe would have read 12040 x 9020.
+
+              (2) IN THE CLIENT. `ssl-vision-client` draws whatever geometry
+              it last received, so it was read from the client itself over
+              its `/api/vision/geometry` websocket:
+
+                push 0:  44 B  field_length=12000 field_width=9000  lines=0
+                push 1: 818 B  field_length=9000  field_width=6000  lines=12
+
+              Push 0 is the client's BUILT-IN DEFAULT, sent on connect when it
+              has no vision yet. Push 1 is the simulator's, and it is Division
+              B. The client is drawing a 9 x 6 m field.
+
+Deviations:   None. `2020B` is a stock preset that ships in the pinned image
+              (`config/simulator/2020B.txt`, alongside 2014/2017/2018/2019/
+              2020), so no config had to be mounted. Changed in
+              `docker-compose.yml` and in all three places SETUP.md Step 13
+              names a geometry (the `docker run` example, the `-g` option
+              table, and the compose block), plus the from-source
+              `simulator-cli -g` invocation.
+
+Notes:        - The two presets differ in more than size: `2020` mounts TWO
+                cameras (derived_camera_world_tx = -3010 and +3010), `2020B`
+                mounts ONE at the centre. So Division B vision arrives as a
+                single camera frame, not two half-field frames that need
+                merging. Worth knowing for TASK-014's frame merge — on this
+                stack there is nothing to merge, which means the merge path
+                will NOT be exercised by local testing. At a real match with
+                four cameras it will be.
+
+              - THE SIMULATOR LEAVES THE SCALAR PENALTY-AREA FIELDS UNSET.
+                In the packet above, `penalty_area_depth`, `penalty_area_width`
+                and `center_circle_radius` all read 0; the defense area is
+                described only by the `field_lines` entries
+                (`LeftPenaltyStretch`, `LeftFieldLeftPenaltyStretch`, ...) and
+                the circle only by `field_arcs`. proto3 cannot distinguish
+                "absent" from 0 for those scalars. TASK-014 is specified to
+                "read geometry from the wire and fail on a Division mismatch":
+                it must key that check on `field_length`/`field_width`/
+                `goal_width`, which ARE populated, and must not read
+                `penalty_area_depth` — against this simulator that reads 0 and
+                would fail every match. Found here, not by TASK-014, so it is
+                written down before someone rediscovers it at a competition.
+
+              - Geometry is republished continuously at ~66 Hz (800 packets in
+                12 s), interleaved 1:1 with detection frames. The client's
+                websocket, by contrast, pushes only on CHANGE — connecting to
+                `/api/vision/geometry` against an already-running stack yields
+                the default frame and then silence, which looks like a broken
+                endpoint and is not. To observe a real push: stop the
+                simulator, restart the client, connect, then start the
+                simulator.

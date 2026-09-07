@@ -37,7 +37,11 @@ services:
     network_mode: host
     restart: unless-stopped
     environment:
-      GEOMETRY: "2020"
+      # "2020" is the Division A preset: a 12.04 x 9.02 m pitch with 1.8 m
+      # goals. We play Division B. "2020B" is 9.0 x 6.0 with 1.0 m goals and
+      # a 2.0 x 1.0 defense area, which matches core/geometry.py's DIV_B
+      # exactly. Both presets ship in the image at config/simulator/.
+      GEOMETRY: "2020B"
       REALISM: "RC2021"
     # Reminder: this publishes vision on 10020, not 10006.
     # configs/net/dev.yaml sets vision.port: 10020 to match.
