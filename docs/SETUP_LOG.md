@@ -1852,3 +1852,23 @@ Deviations:   None.
 Notes:        The named arguments added to the SSL constructor are backward
                 compatible for exactly this reason — every rSoccer call site is
                 positional.
+
+## Rule 2 reinstated; CLAUDE.md reframed for feature work   [PASS]
+Verification: `grep -rn "Rule 2" README.md docs/*.md CLAUDE.md` -> the rule
+              appears in all six places it was removed from (SETUP.md Step 0
+              and its README listing, README.md, ONBOARDING.md, ARCHITECTURE.md
+              §5, CLAUDE.md §5) with one wording. `make lint && make test`
+              unchanged: 52 passed, 1 skipped.
+Deviations:   Reverses the decision in "Rule 2 removed" above. The TASK-072
+              split did not make the rule false: `Backend` is still the one
+              interface for the match path, and `NetworkBackend` and
+              `RSimBackend` both implement it. The rule is now stated in terms
+              of the two protocols -- match code sees only `Backend`, training
+              takes `SimBackend` -- so it names the enforcement (`make lint`
+              type-checks both) rather than a slogan.
+Notes:        CLAUDE.md no longer describes a one-time build from SETUP.md.
+              It now says: source is authoritative, TASKS.md is what to do,
+              the Done-when gate is the unit of work, one task per commit with
+              a SETUP_LOG block, and the same hard prohibitions. Section 6
+              ("unreliable parts of SETUP.md") is gone with the build. The
+              repo path is corrected to ~/tritonbots.

@@ -151,6 +151,14 @@ Every file obeys these.
 `core` defines data types. It never depends on a simulator, a socket, or a
 neural network. Everything else imports `core`.
 
+**Rule 2: Two backends, one match contract.** `Backend` is everything a match
+needs: `dt`, `geometry`, `reset()`, `step(commands)`, `close()`. `RSimBackend`
+and `NetworkBackend` both implement it, and no code on the match path names
+either one. `SimBackend` extends it with the three powers only a simulator
+has: `step(commands, opponent_commands)`, `place()`, `set_game_state()`. Code
+that needs those takes a `SimBackend` in its type, which is why `SSLEnv` cannot
+be pointed at hardware. `make lint` type-checks both. Detail in §4.
+
 **Rule 3: We are always `us`, we always attack `+x`.** The world model has
 `us` and `them`, never `blue` and `yellow`. `core/perspective.py` owns the
 transform. It is a 180° rotation, not a mirror, and it is its own inverse.

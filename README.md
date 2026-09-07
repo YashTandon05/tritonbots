@@ -41,5 +41,6 @@ rSim, 6v6, 60 Hz, single process:  521 steps/s
 ## The architectural rules
 
 - **Rule 1.** `src/tbots/core/` imports nothing from the rest of the codebase.
+- **Rule 2.** Two backends, one match contract. Match code sees only `Backend`; training takes `SimBackend`.
 - **Rule 3.** We are always `us`, we always attack `+x`. The backend does the flipping.
 - **Rule 4.** Units convert exactly once, at the backend boundary. Above it: meters, radians, seconds.

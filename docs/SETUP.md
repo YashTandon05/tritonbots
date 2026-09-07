@@ -86,6 +86,9 @@ These are not negotiable. They are the reason the codebase will still be maintai
 **Rule 1 — `src/tbots/core/` imports nothing from the rest of the codebase.**
 Everything else imports `core`. `core` defines the data types; it never depends on a simulator, a socket, or a neural network. If you find yourself adding `import robosim` or `import torch` to a file in `core/`, you have made a mistake.
 
+**Rule 2 — Two backends, one match contract.**
+`Backend` in `backends/base.py` is everything a match needs: `dt`, `geometry`, `reset()`, `step(commands)`, `close()`. `RSimBackend` and `NetworkBackend` both implement it, and no code on the match path — skills, tactics, perception — names either one. `SimBackend` extends `Backend` with the three powers only a simulator has: `step(commands, opponent_commands)`, `place()`, `set_game_state()`. Code that needs those takes a `SimBackend` in its type, which is why `SSLEnv` cannot be pointed at hardware. `make lint` type-checks both.
+
 **Rule 3 — We are always `us`, we always attack `+x`.**
 The world model has `us` and `them`, never `blue` and `yellow`. The backend flips coordinates if we are yellow or defending the positive half. Every skill, policy, and reward function is written as if we are blue attacking rightward. This eliminates an entire class of bug and halves what a policy has to learn.
 
@@ -4287,6 +4290,7 @@ rSim, 6v6, 60 Hz, single process:  ______ steps/s   (fill this in)
 ## The architectural rules
 
 - **Rule 1.** `src/tbots/core/` imports nothing from the rest of the codebase.
+- **Rule 2.** Two backends, one match contract. Match code sees only `Backend`; training takes `SimBackend`.
 - **Rule 3.** We are always `us`, we always attack `+x`. The backend does the flipping.
 - **Rule 4.** Units convert exactly once, at the backend boundary. Above it: meters, radians, seconds.
 ```
