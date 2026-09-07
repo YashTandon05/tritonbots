@@ -61,15 +61,12 @@ RoboCup Small Size League is 6-a-side robot soccer on a 9 × 6 metre field. Robo
 
 Our approach this year is reinforcement learning, which is why you are here.
 
-### The four rules
+### The architectural rules
 
 These govern every file in the repo. Violating them is the fastest way to have a pull request rejected.
 
 **Rule 1 — `src/tbots/core/` imports nothing from the rest of the codebase.**
 `core` defines the data types. It never depends on a simulator, a socket, or a neural network. If you are adding `import robosim` or `import torch` to a file in `core/`, stop — you are about to make everything else untestable.
-
-**Rule 2 — Two backends, one interface.**
-There is a *training* backend (rSim, in our process, very fast) and a *match* backend (a separate simulator over UDP, realtime). Both implement `Backend`. Nothing above that layer knows which is running. Your skill code and your policies work with both, for free, because you never wrote anything simulator-specific.
 
 **Rule 3 — We are always `us`, and we always attack `+x`.**
 The world model has `us` and `them`, never `blue` and `yellow`. The backend flips coordinates if we happen to be yellow or defending the positive half. So every skill, policy, and reward function you write can assume we are blue attacking rightward. This kills an entire family of sign-error bugs and halves what a policy has to learn.
@@ -449,7 +446,7 @@ defaults to 10006, but the docker-compose vision-client listens on 10020.
 
 **Stop and appreciate what just happened.** That browser tab is the same tool we use to watch a live competition match. It is currently rendering a physics engine running *inside your Python process*, because our `VisionPublisher` converts a `WorldState` into the league's own vision packets. The training simulator, our internal data contract, and the official protocol all agree with each other.
 
-This is Rule 2 working. Nothing above the network layer knows or cares which backend produced those positions.
+Nothing above the network layer knows or cares which backend produced those positions.
 
 **Now measure your machine.** Run it without `--realtime`:
 

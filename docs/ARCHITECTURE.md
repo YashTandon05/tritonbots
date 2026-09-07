@@ -143,16 +143,13 @@ it in September rather than April.
 
 ---
 
-## 5. The four rules
+## 5. The architectural rules
 
 Every file obeys these.
 
 **Rule 1: `src/tbots/core/` imports nothing from the rest of the codebase.**
 `core` defines data types. It never depends on a simulator, a socket, or a
 neural network. Everything else imports `core`.
-
-**Rule 2: Two backends, one interface.** Nothing above the backend layer
-knows which is running.
 
 **Rule 3: We are always `us`, we always attack `+x`.** The world model has
 `us` and `them`, never `blue` and `yellow`. `core/perspective.py` owns the

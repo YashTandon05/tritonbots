@@ -38,9 +38,8 @@ rSim, 6v6, 60 Hz, single process:  521 steps/s
 | understand the architecture | `docs/ARCHITECTURE.md` |
 | pick up a task | `docs/TASKS.md` |
 
-## The four rules
+## The architectural rules
 
-1. `src/tbots/core/` imports nothing from the rest of the codebase.
-2. Two backends, one `Backend` interface. Nothing above knows which is running.
-3. We are always `us`, we always attack `+x`. The backend does the flipping.
-4. Units convert exactly once, at the backend boundary. Above it: meters, radians, seconds.
+- **Rule 1.** `src/tbots/core/` imports nothing from the rest of the codebase.
+- **Rule 3.** We are always `us`, we always attack `+x`. The backend does the flipping.
+- **Rule 4.** Units convert exactly once, at the backend boundary. Above it: meters, radians, seconds.

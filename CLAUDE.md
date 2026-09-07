@@ -178,26 +178,26 @@ Treat these as probes to iterate on, not commands to run once:
 
 ---
 
-## 7. The four architectural rules
+## 7. The architectural rules
 
 Every file you write must obey these. They are quoted verbatim from
-`docs/SETUP.md` Step 0.
+`docs/SETUP.md` Step 0. The numbering is load-bearing: `Rule 3` and `Rule 4`
+are referenced by name in `core/perspective.py`, `core/state.py`,
+`net/referee.py` and elsewhere. Do not renumber them.
 
-1. **`src/tbots/core/` imports nothing from the rest of the codebase.**
-   Everything else imports `core`. `core` defines the data types; it never
-   depends on a simulator, a socket, or a neural network. If you find
-   yourself adding `import robosim` or `import torch` to a file in `core/`,
-   you have made a mistake.
-2. **Two backends, one interface.** A training backend (rSim, in-process,
-   fast) and a match backend (separate process, UDP, realtime) both implement
-   the same `Backend` protocol. Nothing above the backend layer knows which
-   one it is talking to.
-3. **We are always `us`, we always attack `+x`.** The world model has `us`
-   and `them`, never `blue` and `yellow`. The backend flips coordinates if we
-   are yellow or defending the positive half.
-4. **Units convert exactly once, at the backend boundary.** Above it: meters,
-   radians, seconds. All conversion lives in `core/units.py` and the backend
-   adapters. Nowhere else.
+**Rule 1 — `src/tbots/core/` imports nothing from the rest of the codebase.**
+Everything else imports `core`. `core` defines the data types; it never
+depends on a simulator, a socket, or a neural network. If you find yourself
+adding `import robosim` or `import torch` to a file in `core/`, you have made
+a mistake.
+
+**Rule 3 — We are always `us`, we always attack `+x`.** The world model has
+`us` and `them`, never `blue` and `yellow`. The backend flips coordinates if
+we are yellow or defending the positive half.
+
+**Rule 4 — Units convert exactly once, at the backend boundary.** Above it:
+meters, radians, seconds. All conversion lives in `core/units.py` and the
+backend adapters. Nowhere else.
 
 Team name is exactly `TritonBots` — case-sensitive, no spaces. It
 authenticates our game-controller team connection, so a typo fails later and

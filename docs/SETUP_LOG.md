@@ -1790,3 +1790,41 @@ Notes:        Acted on, from the two review axes:
                 certainly in the Step 15 ruff `UP` pass. Replacing the listing
                 wholesale brought the doc up to the code. No transcribed code
                 was reformatted.
+
+## Rule 2 removed from the architectural rules   [PASS]
+Verification: `grep -rn "Rule 2|four rules|four architectural rules"` over all
+              `*.md` and `*.py` -> no hits outside this log. `pytest -q` 52
+              passed / 1 skipped, `make lint` clean.
+
+Deviations:   Removed rather than rewritten, on the human's instruction
+              (2026-09-07). The TASK-072 amendment note added earlier the same
+              day is gone with it.
+
+Notes:        - RULES 3 AND 4 KEEP THEIR NUMBERS. There is no Rule 2 now and
+                the list reads 1, 3, 4. That is deliberate: "Rule 3" and
+                "Rule 4" are referenced BY NAME in 26 places across
+                `core/perspective.py`, `core/state.py`, `net/referee.py`,
+                `backends/network.py`, `tests/test_perspective.py` and four
+                docs. Renumbering would have silently invalidated every one of
+                them, and would have falsified this log. A line in CLAUDE.md §7
+                says so, so the next person does not "tidy" it.
+
+              - The rules were stated in SIX documents, all now consistent:
+                `CLAUDE.md` §7, `docs/SETUP.md` (Step 0 and the closing
+                summary), `docs/ARCHITECTURE.md` §5, `docs/ONBOARDING.md`, and
+                `README.md`. `docs/ONBOARDING.md` also had a prose callout
+                ("This is Rule 2 working") next to the vision-client
+                walkthrough; the sentence stands without the citation.
+
+              - The ordered lists in `CLAUDE.md`, `README.md` and SETUP.md's
+                summary became explicit `**Rule N**` labels. Markdown
+                renumbers ordered lists on render, so a literal `1. / 3. / 4.`
+                would have displayed as 1, 2, 3 and undone the point.
+
+              - WHAT THE REMOVAL COSTS, for the record: the rule carried a
+                second claim beyond the stale one, namely "nothing above the
+                backend layer knows which one it is talking to". That is still
+                true of `Backend` and is still the reason the same `GoToPoint`
+                runs on rSim and ER-Force (`tests/test_backend_parity.py`). It
+                now lives only in `docs/ARCHITECTURE.md`
+                §"`Backend` and `SimBackend`", not in the rules list.

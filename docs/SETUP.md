@@ -79,25 +79,12 @@ macOS is a **first-class development and training platform**. The one thing it c
 
 Anywhere you see `TritonBots`, that is the literal team name — do not change it.
 
-### The four architectural rules
+### The architectural rules
 
 These are not negotiable. They are the reason the codebase will still be maintainable in April.
 
 **Rule 1 — `src/tbots/core/` imports nothing from the rest of the codebase.**
 Everything else imports `core`. `core` defines the data types; it never depends on a simulator, a socket, or a neural network. If you find yourself adding `import robosim` or `import torch` to a file in `core/`, you have made a mistake.
-
-**Rule 2 — Two backends, one interface.**
-There is a training backend (rSim, runs in our Python process, very fast) and a match backend (a separate simulator, talks over UDP, realtime). Both implement the same `Backend` protocol. Nothing above the backend layer knows which one it's talking to.
-
-> **Amended 2026-09-07 (TASK-072).** The interface is now two protocols, and
-> the rule is sharper for it. `Backend` is still the one interface for
-> everything a match needs, and nothing above the backend layer distinguishes
-> rSim from ER-Force through it. `SimBackend` extends it with the three powers
-> only a simulator has — commanding the opposition, `place()`, and
-> `set_game_state()` — and code that needs those says so in its type. The
-> training environment takes a `SimBackend`, which is what makes "you cannot
-> train against real robots" a type error. See §9.1 and `docs/ARCHITECTURE.md`
-> §"`Backend` and `SimBackend`".
 
 **Rule 3 — We are always `us`, we always attack `+x`.**
 The world model has `us` and `them`, never `blue` and `yellow`. The backend flips coordinates if we are yellow or defending the positive half. Every skill, policy, and reward function is written as if we are blue attacking rightward. This eliminates an entire class of bug and halves what a policy has to learn.
@@ -4297,12 +4284,11 @@ rSim, 6v6, 60 Hz, single process:  ______ steps/s   (fill this in)
 | get productive on day one | `docs/ONBOARDING.md` |
 | understand the architecture | `docs/ARCHITECTURE.md` |
 
-## The four rules
+## The architectural rules
 
-1. `src/tbots/core/` imports nothing from the rest of the codebase.
-2. Two backends, one `Backend` interface. Nothing above knows which is running.
-3. We are always `us`, we always attack `+x`. The backend does the flipping.
-4. Units convert exactly once, at the backend boundary. Above it: meters, radians, seconds.
+- **Rule 1.** `src/tbots/core/` imports nothing from the rest of the codebase.
+- **Rule 3.** We are always `us`, we always attack `+x`. The backend does the flipping.
+- **Rule 4.** Units convert exactly once, at the backend boundary. Above it: meters, radians, seconds.
 ```
 
 ```bash
