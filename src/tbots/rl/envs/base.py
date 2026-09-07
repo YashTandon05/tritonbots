@@ -1,4 +1,9 @@
-"""Our Gymnasium environment, built on the Backend interface.
+"""Our Gymnasium environment, built on the SimBackend interface.
+
+A `SimBackend`, not a `Backend`: training needs to place the ball, command
+opponents and inject referee state, and none of those exist on real hardware.
+Taking the narrower type here is what makes "you cannot train against the
+robots" a type error instead of a crash forty minutes into a run.
 
 We do NOT subclass rSoccer's SSLBaseEnv. That class hardcodes coordinate
 conventions, referee handling, and opponent behaviour that we need to
@@ -12,7 +17,7 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 
-from tbots.backends.base import Backend, Scenario
+from tbots.backends.base import Scenario, SimBackend
 from tbots.core.command import RobotCommand
 from tbots.core.state import WorldState
 from tbots.rl.rewards.registry import CompositeReward
@@ -25,7 +30,7 @@ class SSLEnv(gym.Env):
 
     def __init__(
         self,
-        backend: Backend,
+        backend: SimBackend,
         reward: CompositeReward,
         scenario_fn,
         max_episode_steps: int = 3600,

@@ -44,15 +44,18 @@ it, because that is where real runs happen.
 | TASK-013 | Rule 3 is a module: `core/perspective.py`, resolved once from the referee. | `tests/test_perspective.py` |
 | Steps 1–16 | SETUP.md end to end, all seven acceptance checks. | SETUP_LOG Step 16 |
 | Core contracts | `core/{units,geometry,gamestate,state,command,perspective}.py`. | `make lint` |
-| rSim backend | `backends/rsim.py`. Gets reshaped by TASK-072 but works today. | `pytest tests/test_rsim_backend.py` |
+| rSim backend | `backends/rsim.py`, reshaped by TASK-072. | `pytest tests/test_rsim_backend.py` |
 | Referee ingest | `net/referee.py` verified against the real game controller. | SETUP_LOG Step 16 |
 | VisionPublisher | Any `WorldState` to SSL-Vision packets, with field lines. | SETUP_LOG Step 16 |
 | GoToPoint | Reference skill, converges in rSim. | `tests/test_backend_parity.py` |
 | Reward registry | `@register_reward`, `CompositeReward`, per-term contributions. Signature changes in TASK-076. | `rl/rewards/example.py` |
 | Run artifacts | `rl/artifacts.py`: resolved config, atomic checkpoints, `format_version`. Metadata extends in TASK-059. | `tests/test_rl_artifacts.py` |
 | Hydra composition | `configs/config.yaml` composes `env`/`reward`/`train`. | `python -m tbots.rl.train train.run_dir=/tmp/x` |
-| External stack | `docker compose up -d`: game controller 3.21.0, ER-Force, vision-client. Geometry preset is wrong; see TASK-071. | SETUP_LOG Step 13 |
-| Throughput | 521 steps/s, 6v6, 60 Hz, single process on WSL2; about 250 on Atlantis. | README |
+| External stack | `docker compose up -d`: game controller 3.21.0, ER-Force, vision-client. | SETUP_LOG Step 13 |
+| Throughput | 521 steps/s, 6v6, single process on WSL2; about 250 on Atlantis. Measured before TASK-070, so it was 521 steps of 17 ms; re-measure with TASK-055. | README |
+| TASK-070 | rSim steps at a true 1/60 s. Our fork's `SSL` takes a float-seconds timestep; an int is still milliseconds. | `tests/test_rsim_backend.py`, `docs/RSIM_FACTS.md` |
+| TASK-071 | The compose stack runs Division B (`GEOMETRY: "2020B"`), verified off the wire and in `ssl-vision-client`. | SETUP_LOG TASK-071 |
+| TASK-072 | `Backend` / `SimBackend` split. Opponents commandable, `place()`, unknown ids raise, `reconfigure()` gone. | `tests/test_rsim_backend.py` |
 
 **Superseded, not deleted:** TASK-054's `rl/wrappers/domain_rand.py` (Gym
 wrapper on the observation vector). Replaced by `PerceptionSim` (TASK-075).
@@ -67,17 +70,16 @@ noted.
 
 ### 3.1 Fixes the review found
 
+Three of the four are done — see §2. What is left:
+
 | ID | Task | Size | Done when |
 |---|---|---|---|
-| **TASK-070** | **rSim runs at 60 Hz, not 58.8.** The binding takes `timeStep_ms` as an `int`; `int(round(1/60*1000))` is 17. Add a `double` seconds overload to our fork's pybind11 binding, keep the int overload for rSoccer, bump the submodule, pass `dt` through unchanged. | S | A test steps a robot at 1 m/s for 60 ticks and lands within 1 cm of 1 m; `docs/RSIM_FACTS.md` records the new constructor. |
-| **TASK-071** | **Division B in the compose stack.** `GEOMETRY: "2020"` is a 12.04 × 9.02 m Division A pitch. Change to `2020B` in `docker-compose.yml` and SETUP.md Step 13. | S | `ssl-vision-client` on the compose stack draws a 9 × 6 field; SETUP_LOG records the observed `SSL_GeometryData`. |
 | **TASK-004** | **CI guards the rSim facts.** `test_state_length_matches_constants` has no assertion. Make it assert; pin `field_type`, strides, `ACTION_LEN`, and the 60 Hz timestep; run `scripts/verify_rsim.py` in CI. | S | A deliberate wrong constant fails CI. |
 
 ### 3.2 Backend and core types
 
 | ID | Task | Size | Done when |
 |---|---|---|---|
-| **TASK-072** | **`SimBackend` protocol.** Split `backends/base.py` into `Backend` (match contract) and `SimBackend` (adds `step(commands, opponent_commands=())`, `place(ball, us, them)`, `set_game_state`). `RSimBackend` implements `place` as reset-with-current-poses. Unknown `robot_id` in a command raises. Remove `reconfigure`; robot counts are fixed per run (TASK-041/TASK-055 rely on this). | M | Tests: opponents move when commanded and stand still when not; `place(ball=...)` moves only the ball; an unknown ID raises `ValueError`. |
 | **TASK-073** | **`as_opponent(world)`** in `core/perspective.py`: rotate 180° and swap `us`/`them`. | S | Test: `as_opponent(as_opponent(w)) == w`, and an opponent at `(+3, 0)` sees itself at `(-3, 0)` in `us`. |
 | **TASK-074** | **Perception types in `core`.** `DetectionFrame`, `RobotFeedback`, `WorldState.t_capture`, `WorldState.telemetry`. `net/vision.py` and `net/robot_control.py` will decode into them; `PerceptionSim` synthesises them. | S | `mypy src/tbots/core` clean; a round-trip test through the frozen dataclasses. |
 
@@ -224,8 +226,8 @@ Three config files still describe features that do not exist:
 
 ## 8. If you only get five things done
 
-1. **TASK-070, 071, 072.** The fixes. Half a day each and everything sits on
-   them.
+1. ~~**TASK-070, 071, 072.** The fixes.~~ **Done 2026-09-07.** TASK-004 is
+   the remainder of §3.1: it is what stops any of the three regressing.
 2. **TASK-076 + 078 + 079 + 050.** The contracts a recruit touches, frozen
    before anyone writes against them.
 3. **TASK-056.** The trainer.

@@ -7,12 +7,12 @@ about the referee. That is the network backend's job.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import robosim
 
-from tbots.backends.base import Backend, Scenario
+from tbots.backends.base import BallPlacement, Pose, Scenario, SimBackend
 from tbots.core.command import RobotCommand
 from tbots.core.gamestate import HALT, GameState
 from tbots.core.geometry import DIV_B, FieldGeometry
@@ -52,7 +52,7 @@ def _ang_out(v: float) -> float:
     return rad_to_deg(v) if ANGLES_IN_DEGREES else v
 
 
-class RSimBackend(Backend):
+class RSimBackend(SimBackend):
     def __init__(
         self,
         n_us: int = 6,
@@ -69,9 +69,15 @@ class RSimBackend(Backend):
         self._t = 0.0
         self._game: GameState = HALT
         self._sim: robosim.SSL | None = None
+        # The last WorldState we produced. place() reads the current
+        # poses from here rather than from the simulator, because a
+        # second get_state() would wreck the velocity differencing.
+        self._last: WorldState | None = None
         self._expected_state_len = BALL_STRIDE + ROBOT_STRIDE * (n_us + n_them)
 
     # -- Backend protocol ---------------------------------------------------
+    # (step() carries SimBackend's widened signature; the extra argument
+    #  defaults, so this is still the match contract.)
 
     @property
     def dt(self) -> float:
@@ -113,38 +119,74 @@ class RSimBackend(Backend):
         self._t = 0.0
         return self._observe()
 
-    def step(self, commands: Sequence[RobotCommand]) -> WorldState:
-        assert self._sim is not None, "call reset() before step()"
-        self._sim.step(self._encode(commands))
+    def step(self, commands: Sequence[RobotCommand],
+             opponent_commands: Sequence[RobotCommand] = ()) -> WorldState:
+        """Advance one tick. See `SimBackend.step`.
+
+        `commands` are ours, `opponent_commands` are theirs, and `robot_id` 0
+        in each list is a different robot. Opponents left uncommanded stand
+        still: their action slots stay zero.
+        """
+        if self._sim is None:
+            raise RuntimeError("call reset() before step()")
+        self._sim.step(self._encode(commands, opponent_commands))
         self._t += self._dt
         return self._observe()
 
     def close(self) -> None:
         self._sim = None
+        self._last = None
 
-    # -- curriculum support -------------------------------------------------
+    # -- simulator-only powers ---------------------------------------------
 
-    def reconfigure(self, n_us: int, n_them: int) -> None:
-        """Change the number of robots. Used for curriculum learning.
+    def place(self, ball: BallPlacement | None = None,
+              us: Mapping[int, Pose] | None = None,
+              them: Mapping[int, Pose] | None = None) -> WorldState:
+        """Teleport what is named, leave the rest. See `SimBackend.place`.
 
-        rSim fixes the robot count at construction time, so this tears the
-        simulator down and rebuilds it. Cheap (a few ms) but NOT free -- do
-        it between curriculum stages, never inside an episode.
+        rSim has no partial teleport, so this is a full `reset()` with the
+        CURRENT poses filled in for everything the caller did not name. Two
+        consequences follow from that, and both are visible to callers:
 
-        The FIELD does not change. A 2v2 stage still runs on the full 9x6 m
-        Division B pitch, which is deliberate: keeping the geometry constant
-        is what lets a policy trained at 2v2 transfer to 6v6.
+        1. ROBOTS STOP. rSim's reset takes robot poses only -- `[x, y, dir]`,
+           no velocity -- so every robot on the field ends the call
+           stationary, including ones nobody placed. The ball keeps its
+           velocity, because `ballPos` carries `(vx, vy)`. Nothing can be done
+           about this short of a new rSim entry point; it is why `place()` is
+           for restarts and episode setup, not for nudging things mid-play.
+
+        2. THE RETURNED VELOCITIES ARE ALL ZERO, including the ball's. A reset
+           clears the baseline that `get_state()` differences against, so the
+           first read after it reports zero for everything (docs/RSIM_FACTS.md,
+           trap 4). The ball really is moving if you gave it a velocity; you
+           just cannot see it until the next `step()`.
+
+        Simulated time does NOT rewind. `place()` happens during an episode;
+        only `reset()` starts a new one.
         """
-        if (n_us, n_them) == (self._n_us, self._n_them):
-            return
-        if not (0 < n_us <= self._geom.max_robots):
-            raise ValueError(f"n_us must be 1..{self._geom.max_robots}, got {n_us}")
-        if not (0 <= n_them <= self._geom.max_robots):
-            raise ValueError(f"n_them must be 0..{self._geom.max_robots}, got {n_them}")
-        self._n_us = n_us
-        self._n_them = n_them
-        self._expected_state_len = BALL_STRIDE + ROBOT_STRIDE * (n_us + n_them)
-        self._sim = None          # forces a rebuild on the next reset()
+        if self._sim is None or self._last is None:
+            raise RuntimeError("call reset() before place()")
+
+        cur = self._last
+        ball_pos = (list(ball) if ball is not None
+                    else [cur.ball.x, cur.ball.y, cur.ball.vx, cur.ball.vy])
+        self._sim.reset(
+            ball_pos,
+            self._poses(cur.us, self._n_us, us, "ours"),
+            self._poses(cur.them, self._n_them, them, "theirs"),
+        )
+        return self._observe()
+
+    def set_game_state(self, game: GameState) -> None:
+        """Injected by the environment or a SyntheticReferee. rSim itself
+        has no concept of a referee."""
+        self._game = game
+
+    # -- fixed for the whole run ---------------------------------------------
+    # rSim fixes the robot count at construction, and so do we: `reconfigure()`
+    # is gone (TASK-072). A curriculum is a sequence of RUNS, not a simulator
+    # that changes shape underneath a running policy, and TASK-041/TASK-055
+    # both assume the count cannot move.
 
     @property
     def n_us(self) -> int:
@@ -153,11 +195,6 @@ class RSimBackend(Backend):
     @property
     def n_them(self) -> int:
         return self._n_them
-
-    def set_game_state(self, game: GameState) -> None:
-        """Injected by the environment or a SyntheticReferee. rSim itself
-        has no concept of a referee."""
-        self._game = game
 
     # -- internals ----------------------------------------------------------
 
@@ -168,13 +205,47 @@ class RSimBackend(Backend):
             out.append([default_x * (1.0 + 0.3 * i), -2.5, 0.0])
         return out
 
-    def _encode(self, commands: Sequence[RobotCommand]) -> list[list[float]]:
+    def _slot(self, robot_id: int, n: int, side: str) -> int:
+        """Index of `robot_id` within one team, or ValueError.
+
+        Not a silent skip. An out-of-range id used to be dropped without a
+        word, so a policy could spend a whole run commanding a robot that did
+        not exist and look merely bad at football.
+        """
+        if not (0 <= robot_id < n):
+            have = f"ids are 0..{n - 1}" if n else "there are none on that side"
+            raise ValueError(f"robot {robot_id} is not one of {side}: {have}")
+        return robot_id
+
+    def _poses(self, current: dict[int, RobotState], n: int,
+               overrides: Mapping[int, Pose] | None,
+               side: str) -> list[list[float]]:
+        """One team's poses for a reset: `overrides` where given, else current."""
+        for robot_id in overrides or ():
+            self._slot(robot_id, n, side)
+        out = []
+        for i in range(n):
+            if overrides is not None and i in overrides:
+                x, y, theta = overrides[i]
+            else:
+                r = current[i]
+                x, y, theta = r.x, r.y, r.theta
+            out.append([x, y, _ang_out(theta)])
+        return out
+
+    def _encode(self, commands: Sequence[RobotCommand],
+                opponent_commands: Sequence[RobotCommand]) -> list[list[float]]:
+        # rSim's action list is blue-then-yellow, so our robot i is slot i and
+        # their robot i is slot n_us + i. Everything starts at zero, which is
+        # how an uncommanded robot stands still.
         n = self._n_us + self._n_them
         acts = [[0.0] * ACTION_LEN for _ in range(n)]
-        for c in commands:
-            if not (0 <= c.robot_id < self._n_us):
-                continue
-            a = acts[c.robot_id]
+        pairs = [(c, self._slot(c.robot_id, self._n_us, "ours"))
+                 for c in commands]
+        pairs += [(c, self._n_us + self._slot(c.robot_id, self._n_them, "theirs"))
+                  for c in opponent_commands]
+        for c, slot in pairs:
+            a = acts[slot]
             a[A_USE_WHEELS] = 0.0          # 0 = interpret as body velocities
             a[A_VX] = c.vx
             a[A_VY] = c.vy
@@ -223,4 +294,6 @@ class RSimBackend(Backend):
             )
             (us if i < self._n_us else them)[r.robot_id] = r
 
-        return WorldState(t=self._t, ball=ball, us=us, them=them, game=self._game)
+        self._last = WorldState(t=self._t, ball=ball, us=us, them=them,
+                                game=self._game)
+        return self._last

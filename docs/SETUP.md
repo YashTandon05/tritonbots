@@ -1701,16 +1701,33 @@ git add src/tbots/core && git commit -m "feat: core contracts"
 ### 9.1 `src/tbots/backends/base.py`
 
 ```python
-"""The one interface that both simulators implement."""
+"""The interfaces every backend implements. Two of them, not one.
+
+`Backend` is the MATCH contract: everything a real robot on a real field can
+do. `SimBackend` adds the powers only a simulator has -- commanding the
+opposition, teleporting things, and being told what the referee said.
+
+Keeping them apart is not tidiness. A training environment requires a
+`SimBackend`, so the type checker refuses a training run pointed at hardware,
+and nothing in the match path can quietly grow a dependency on a power that
+disappears the moment we unplug the simulator.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Protocol, Sequence, runtime_checkable
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from tbots.core.command import RobotCommand
+from tbots.core.gamestate import GameState
 from tbots.core.geometry import DIV_B, FieldGeometry
 from tbots.core.state import WorldState
+
+# (x, y, theta) -- meters, meters, radians, in our normalised frame.
+Pose = tuple[float, float, float]
+# (x, y, vx, vy) -- the ball carries velocity; robots do not. See place().
+BallPlacement = tuple[float, float, float, float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1727,12 +1744,12 @@ class Scenario:
     seed: int | None = None
 
     @staticmethod
-    def single_robot_at(x: float, y: float, theta: float = 0.0) -> "Scenario":
+    def single_robot_at(x: float, y: float, theta: float = 0.0) -> Scenario:
         return Scenario(ball=(2.0, 0.0, 0.0, 0.0), us=((x, y, theta),), them=())
 
     @staticmethod
     def kickoff(n_us: int = 6, n_them: int = 6,
-                geom: FieldGeometry = DIV_B) -> "Scenario":
+                geom: FieldGeometry = DIV_B) -> Scenario:
         us = tuple((-0.5 - 0.6 * i, (-1) ** i * 0.7 * (i // 2), 0.0)
                    for i in range(n_us))
         them = tuple((0.5 + 0.6 * i, (-1) ** i * 0.7 * (i // 2), 3.14159)
@@ -1742,10 +1759,14 @@ class Scenario:
 
 @runtime_checkable
 class Backend(Protocol):
-    """Anything that can be stepped and observed.
+    """Anything that can be stepped and observed. The match contract.
 
     Implementations MUST return WorldState in canonical units (meters,
     radians) and in our normalised frame (we are `us`, we attack +x).
+
+    Everything here is something real robots on a real field can do. If you
+    are about to add a method that only a simulator could implement, it
+    belongs on `SimBackend`.
     """
 
     @property
@@ -1761,11 +1782,59 @@ class Backend(Protocol):
     def step(self, commands: Sequence[RobotCommand]) -> WorldState: ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class SimBackend(Backend, Protocol):
+    """A Backend that is a simulator, and can therefore do three more things.
+
+    rSim is one. So is ER-Force once simulation control is wired up. Real
+    robots are only ever a `Backend`.
+    """
+
+    def step(self, commands: Sequence[RobotCommand],
+             opponent_commands: Sequence[RobotCommand] = ()) -> WorldState:
+        """Advance one tick.
+
+        `commands` address `us`, `opponent_commands` address `them`, and the
+        same `robot_id` means a different robot in each list. Opponents are
+        optional; uncommanded ones stand still, which is what makes a scripted
+        or frozen-checkpoint opponent something you opt into rather than
+        something you have to supply every tick.
+
+        A `robot_id` that is not on the team being addressed raises
+        `ValueError`. It used to be dropped in silence, which meant a typo in
+        an observation builder trained a policy against a robot that never
+        received anything.
+        """
+        ...
+
+    def place(self, ball: BallPlacement | None = None,
+              us: Mapping[int, Pose] | None = None,
+              them: Mapping[int, Pose] | None = None) -> WorldState:
+        """Teleport whatever is named and leave everything else where it is.
+
+        `place(ball=...)` moves only the ball; `place(us={2: pose})` moves only
+        our robot 2. An unknown `robot_id` raises `ValueError`.
+
+        Robot placements carry no velocity, and that is not an oversight: rSim
+        cannot express one. See `RSimBackend.place` for what that costs.
+        """
+        ...
+
+    def set_game_state(self, game: GameState) -> None:
+        """Tell the simulator what the referee would have said.
+
+        A simulator has no referee. In training this comes from a
+        `SyntheticReferee`; a match backend reads the real thing off the wire
+        and has nothing to inject.
+        """
+        ...
 ```
 
 ### 9.2 `src/tbots/backends/rsim.py`
 
-> **Before you write this file, open `docs/RSIM_FACTS.md` from Step 6** and substitute the four verified numbers into the constants at the top. The constants below are already the values verified against our fork (rSim commit `69f0d8e`) — if you are building against a different fork commit, re-run `scripts/verify_rsim.py` and reconfirm before trusting them. Two of these are NOT what the upstream READMEs imply: `field_type` for Division B is `1`, not `0`, and the action vector is `8` elements, not `6` — see `docs/RSIM_FACTS.md` for why a wrong action length does not raise an exception, which is what makes it dangerous.
+> **Before you write this file, open `docs/RSIM_FACTS.md` from Step 6** and substitute the four verified numbers into the constants at the top. The constants below are already the values verified against our fork (rSim commit `56d0253`) — if you are building against a different fork commit, re-run `scripts/verify_rsim.py` and reconfirm before trusting them. Two of these are NOT what the upstream READMEs imply: `field_type` for Division B is `1`, not `0`, and the action vector is `8` elements, not `6` — see `docs/RSIM_FACTS.md` for why a wrong action length does not raise an exception, which is what makes it dangerous.
 
 ```python
 """Training backend: rSim (ODE) running in-process.
@@ -1777,13 +1846,12 @@ about the referee. That is the network backend's job.
 
 from __future__ import annotations
 
-import math
-from typing import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import robosim
 
-from tbots.backends.base import Backend, Scenario
+from tbots.backends.base import BallPlacement, Pose, Scenario, SimBackend
 from tbots.core.command import RobotCommand
 from tbots.core.gamestate import HALT, GameState
 from tbots.core.geometry import DIV_B, FieldGeometry
@@ -1823,7 +1891,7 @@ def _ang_out(v: float) -> float:
     return rad_to_deg(v) if ANGLES_IN_DEGREES else v
 
 
-class RSimBackend(Backend):
+class RSimBackend(SimBackend):
     def __init__(
         self,
         n_us: int = 6,
@@ -1840,9 +1908,15 @@ class RSimBackend(Backend):
         self._t = 0.0
         self._game: GameState = HALT
         self._sim: robosim.SSL | None = None
+        # The last WorldState we produced. place() reads the current
+        # poses from here rather than from the simulator, because a
+        # second get_state() would wreck the velocity differencing.
+        self._last: WorldState | None = None
         self._expected_state_len = BALL_STRIDE + ROBOT_STRIDE * (n_us + n_them)
 
     # -- Backend protocol ---------------------------------------------------
+    # (step() carries SimBackend's widened signature; the extra argument
+    #  defaults, so this is still the match contract.)
 
     @property
     def dt(self) -> float:
@@ -1884,38 +1958,74 @@ class RSimBackend(Backend):
         self._t = 0.0
         return self._observe()
 
-    def step(self, commands: Sequence[RobotCommand]) -> WorldState:
-        assert self._sim is not None, "call reset() before step()"
-        self._sim.step(self._encode(commands))
+    def step(self, commands: Sequence[RobotCommand],
+             opponent_commands: Sequence[RobotCommand] = ()) -> WorldState:
+        """Advance one tick. See `SimBackend.step`.
+
+        `commands` are ours, `opponent_commands` are theirs, and `robot_id` 0
+        in each list is a different robot. Opponents left uncommanded stand
+        still: their action slots stay zero.
+        """
+        if self._sim is None:
+            raise RuntimeError("call reset() before step()")
+        self._sim.step(self._encode(commands, opponent_commands))
         self._t += self._dt
         return self._observe()
 
     def close(self) -> None:
         self._sim = None
+        self._last = None
 
-    # -- curriculum support -------------------------------------------------
+    # -- simulator-only powers ---------------------------------------------
 
-    def reconfigure(self, n_us: int, n_them: int) -> None:
-        """Change the number of robots. Used for curriculum learning.
+    def place(self, ball: BallPlacement | None = None,
+              us: Mapping[int, Pose] | None = None,
+              them: Mapping[int, Pose] | None = None) -> WorldState:
+        """Teleport what is named, leave the rest. See `SimBackend.place`.
 
-        rSim fixes the robot count at construction time, so this tears the
-        simulator down and rebuilds it. Cheap (a few ms) but NOT free -- do
-        it between curriculum stages, never inside an episode.
+        rSim has no partial teleport, so this is a full `reset()` with the
+        CURRENT poses filled in for everything the caller did not name. Two
+        consequences follow from that, and both are visible to callers:
 
-        The FIELD does not change. A 2v2 stage still runs on the full 9x6 m
-        Division B pitch, which is deliberate: keeping the geometry constant
-        is what lets a policy trained at 2v2 transfer to 6v6.
+        1. ROBOTS STOP. rSim's reset takes robot poses only -- `[x, y, dir]`,
+           no velocity -- so every robot on the field ends the call
+           stationary, including ones nobody placed. The ball keeps its
+           velocity, because `ballPos` carries `(vx, vy)`. Nothing can be done
+           about this short of a new rSim entry point; it is why `place()` is
+           for restarts and episode setup, not for nudging things mid-play.
+
+        2. THE RETURNED VELOCITIES ARE ALL ZERO, including the ball's. A reset
+           clears the baseline that `get_state()` differences against, so the
+           first read after it reports zero for everything (docs/RSIM_FACTS.md,
+           trap 4). The ball really is moving if you gave it a velocity; you
+           just cannot see it until the next `step()`.
+
+        Simulated time does NOT rewind. `place()` happens during an episode;
+        only `reset()` starts a new one.
         """
-        if (n_us, n_them) == (self._n_us, self._n_them):
-            return
-        if not (0 < n_us <= self._geom.max_robots):
-            raise ValueError(f"n_us must be 1..{self._geom.max_robots}, got {n_us}")
-        if not (0 <= n_them <= self._geom.max_robots):
-            raise ValueError(f"n_them must be 0..{self._geom.max_robots}, got {n_them}")
-        self._n_us = n_us
-        self._n_them = n_them
-        self._expected_state_len = BALL_STRIDE + ROBOT_STRIDE * (n_us + n_them)
-        self._sim = None          # forces a rebuild on the next reset()
+        if self._sim is None or self._last is None:
+            raise RuntimeError("call reset() before place()")
+
+        cur = self._last
+        ball_pos = (list(ball) if ball is not None
+                    else [cur.ball.x, cur.ball.y, cur.ball.vx, cur.ball.vy])
+        self._sim.reset(
+            ball_pos,
+            self._poses(cur.us, self._n_us, us, "ours"),
+            self._poses(cur.them, self._n_them, them, "theirs"),
+        )
+        return self._observe()
+
+    def set_game_state(self, game: GameState) -> None:
+        """Injected by the environment or a SyntheticReferee. rSim itself
+        has no concept of a referee."""
+        self._game = game
+
+    # -- fixed for the whole run ---------------------------------------------
+    # rSim fixes the robot count at construction, and so do we: `reconfigure()`
+    # is gone (TASK-072). A curriculum is a sequence of RUNS, not a simulator
+    # that changes shape underneath a running policy, and TASK-041/TASK-055
+    # both assume the count cannot move.
 
     @property
     def n_us(self) -> int:
@@ -1924,11 +2034,6 @@ class RSimBackend(Backend):
     @property
     def n_them(self) -> int:
         return self._n_them
-
-    def set_game_state(self, game: GameState) -> None:
-        """Injected by the environment or a SyntheticReferee. rSim itself
-        has no concept of a referee."""
-        self._game = game
 
     # -- internals ----------------------------------------------------------
 
@@ -1939,13 +2044,47 @@ class RSimBackend(Backend):
             out.append([default_x * (1.0 + 0.3 * i), -2.5, 0.0])
         return out
 
-    def _encode(self, commands: Sequence[RobotCommand]) -> list[list[float]]:
+    def _slot(self, robot_id: int, n: int, side: str) -> int:
+        """Index of `robot_id` within one team, or ValueError.
+
+        Not a silent skip. An out-of-range id used to be dropped without a
+        word, so a policy could spend a whole run commanding a robot that did
+        not exist and look merely bad at football.
+        """
+        if not (0 <= robot_id < n):
+            have = f"ids are 0..{n - 1}" if n else "there are none on that side"
+            raise ValueError(f"robot {robot_id} is not one of {side}: {have}")
+        return robot_id
+
+    def _poses(self, current: dict[int, RobotState], n: int,
+               overrides: Mapping[int, Pose] | None,
+               side: str) -> list[list[float]]:
+        """One team's poses for a reset: `overrides` where given, else current."""
+        for robot_id in overrides or ():
+            self._slot(robot_id, n, side)
+        out = []
+        for i in range(n):
+            if overrides is not None and i in overrides:
+                x, y, theta = overrides[i]
+            else:
+                r = current[i]
+                x, y, theta = r.x, r.y, r.theta
+            out.append([x, y, _ang_out(theta)])
+        return out
+
+    def _encode(self, commands: Sequence[RobotCommand],
+                opponent_commands: Sequence[RobotCommand]) -> list[list[float]]:
+        # rSim's action list is blue-then-yellow, so our robot i is slot i and
+        # their robot i is slot n_us + i. Everything starts at zero, which is
+        # how an uncommanded robot stands still.
         n = self._n_us + self._n_them
         acts = [[0.0] * ACTION_LEN for _ in range(n)]
-        for c in commands:
-            if not (0 <= c.robot_id < self._n_us):
-                continue
-            a = acts[c.robot_id]
+        pairs = [(c, self._slot(c.robot_id, self._n_us, "ours"))
+                 for c in commands]
+        pairs += [(c, self._n_us + self._slot(c.robot_id, self._n_them, "theirs"))
+                  for c in opponent_commands]
+        for c, slot in pairs:
+            a = acts[slot]
             a[A_USE_WHEELS] = 0.0          # 0 = interpret as body velocities
             a[A_VX] = c.vx
             a[A_VY] = c.vy
@@ -1994,16 +2133,34 @@ class RSimBackend(Backend):
             )
             (us if i < self._n_us else them)[r.robot_id] = r
 
-        return WorldState(t=self._t, ball=ball, us=us, them=them, game=self._game)
+        self._last = WorldState(t=self._t, ball=ball, us=us, them=them,
+                                game=self._game)
+        return self._last
 ```
 
 > **Note on the `us`/`them` flip:** rSim always calls the first `n_us` robots "blue". Because we *choose* to be blue in training, no flip is needed here. The flip lives in the **network** backend, where the game controller tells us our real colour and field side. Keep it that way — training should never care about colour.
 
 ### 9.2a Variable robot counts and curriculum learning
 
-**Yes, arbitrary counts work.** rSim takes `n_robots_blue` and `n_robots_yellow` as constructor arguments, so 1v0, 1v1, 2v2, 3v3, and 6v6 are all valid. `RSimBackend(n_us=2, n_them=2)` is all it takes, and `reconfigure()` above lets a curriculum change stages mid-training.
+> **Superseded 2026-09-07 (TASK-072) — `reconfigure()` no longer exists.**
+> This section originally had the training loop call
+> `backend.reconfigure(n_us, n_them)` to change stages mid-run. The
+> architecture review deleted that: **a curriculum is a sequence of RUNS**,
+> each with a fixed robot count, promoted by a human. A simulator that changes
+> shape underneath a running policy invalidates the rollout buffer, the
+> observation size and the checkpoint metadata all at once, and
+> `rl/vec.py` (TASK-055) cannot do it at all across subprocess workers.
+> Robot counts are now fixed for the life of a backend. The two design
+> consequences below survive the change unaltered, and are the reason the
+> section is kept.
 
-Two design consequences you must handle up front, because retrofitting them is painful:
+**Arbitrary counts still work — at construction.** rSim takes
+`n_robots_blue` and `n_robots_yellow` as constructor arguments, so 1v0, 1v1,
+2v2, 3v3, and 6v6 are all valid: `RSimBackend(n_us=2, n_them=2)`. What changed
+is only that you pick the count once, per run.
+
+Two design consequences you must handle up front, because retrofitting them is
+painful:
 
 **(a) The observation vector must be a fixed size across the whole curriculum.** If your 2v2 observation is 18 floats and your 6v6 observation is 54, the policy cannot transfer between stages and the curriculum is pointless. Two ways out:
 
@@ -2016,7 +2173,8 @@ The tactics layer wants the set encoder anyway (a flat MLP over concatenated pos
 
 **(b) The field size stays constant.** Do *not* shrink the pitch for 2v2. Keeping Division B geometry across every stage is what makes distances, angles, and goal positions mean the same thing at every difficulty — which is the entire mechanism by which the earlier stage teaches something useful about the later one.
 
-A curriculum is then just a schedule in config (see Step 14.5), and the training loop calls `backend.reconfigure(...)` when it advances a stage.
+A curriculum is then a schedule of runs, each launched with its own
+`n_us`/`n_them` and starting from the previous stage's checkpoint.
 
 ### 9.3 `src/tbots/backends/network.py` (skeleton)
 
@@ -3497,7 +3655,15 @@ stages:
     promote_when: null       # terminal stage
 ```
 
-The trainer calls `backend.reconfigure(stage.n_us, stage.n_them)` on promotion. Because the field geometry never changes between stages, a policy carries its spatial understanding forward.
+> **Superseded 2026-09-07 (TASK-072).** This originally read "the trainer
+> calls `backend.reconfigure(stage.n_us, stage.n_them)` on promotion".
+> `reconfigure()` is gone and robot counts are fixed per run, so **each stage
+> is its own run**, launched with its own `n_us`/`n_them` and resuming from the
+> previous stage's checkpoint; `promote_when` is not read by anything and
+> promotion is a human decision. See Step 9.2a. The file stays as documentation
+> of the intended progression.
+
+Because the field geometry never changes between stages, a policy carries its spatial understanding forward.
 
 ```bash
 git add configs && git commit -m "chore: configuration"

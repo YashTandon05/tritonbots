@@ -1554,3 +1554,114 @@ Notes:        - `SSL(..., 17.0, ...)` IS SEVENTEEN SECONDS. The overload keys
                 deliberately does not set `editable.rebuild`), so anyone
                 pulling this must reinstall or they will keep the old .so and
                 the old physics.
+
+## TASK-072 — the `Backend` / `SimBackend` split   [PASS]
+Verification: `pytest -q` -> 50 passed, 1 skipped (was 34 + 1 before this
+              run of work). `make lint` clean.
+              `MYPYPATH=src mypy --ignore-missing-imports src/tbots/backends
+              src/tbots/core src/tbots/rl/envs/base.py` -> clean, 12 files.
+
+              The three gates from the task board, each its own test in
+              `tests/test_rsim_backend.py`:
+
+                opponents move when commanded    test_opponents_move_when_commanded
+                and stand still when not         test_opponents_stand_still_when_not_commanded
+                place(ball=...) moves only ball  test_place_moves_only_the_ball
+                unknown id raises ValueError     test_unknown_robot_id_raises
+
+              Plus, because they are the ways this can silently go wrong:
+              `test_our_id_is_not_silently_an_opponent_id` (n_us=1, n_them=1,
+              so id 0 is valid on both sides and means two different robots),
+              `test_place_moves_only_the_robots_named`,
+              `test_place_with_nothing_named_changes_nothing`,
+              `test_place_stops_the_robots`, `test_place_rejects_an_unknown_robot`,
+              `test_place_before_reset_raises`, `test_reconfigure_is_gone`,
+              and two protocol-conformance tests.
+
+              THE SPLIT WAS VERIFIED TO ACTUALLY BITE, not just to compile.
+              With `rl/envs/base.py` now taking a `SimBackend`, mypy on a
+              probe that hands it a `NetworkBackend`:
+
+                error: Argument 1 to "wants_sim" has incompatible type
+                "NetworkBackend"; expected "SimBackend"
+                note: "NetworkBackend" is missing following "SimBackend"
+                      protocol members: place, set_game_state
+                note: Following member(s) have conflicts:
+                      Expected: def step(self, commands, opponent_commands=...)
+                      Got:      def step(self, commands)
+
+Deviations:   - `rl/envs/base.py` now annotates `backend: SimBackend` instead
+                of `Backend`. Not listed in TASK-072, but it is the entire
+                stated purpose of the split ("a training environment requires
+                a SimBackend, so the type checker stops anyone pointing a
+                training run at hardware", ARCHITECTURE §"Backend and
+                SimBackend"). One word; the file is rewritten by TASK-076
+                anyway.
+
+              - `place()` also raises `ValueError` on an unknown id, and
+                `RuntimeError` if called before `reset()`. The board specifies
+                raising only for commands, but `place()` is new surface with
+                no behaviour to preserve, and a silently-ignored placement is
+                the same defect class the review found.
+
+              - Kept `n_us` / `n_them` as properties. They are not in the
+                protocol; robot counts being fixed for the run is now a stated
+                property of the backend, so reading them is legitimate and
+                `reconfigure()` was the only thing that had to go.
+
+Notes:        - `place()` STOPS EVERY ROBOT ON THE FIELD, including ones
+                nobody placed, and this cannot be fixed at our layer. rSim has
+                no partial teleport, so `place()` is `reset()` with the current
+                poses filled in — and rSim's reset takes robot poses only,
+                `[x, y, dir]`, with no velocity field. The ball keeps its
+                velocity, because `ballPos` carries `(vx, vy)`. Measured: a
+                robot moving at 1 m/s is stationary after `place()` and does
+                not coast. `test_place_stops_the_robots` pins it so it is a
+                documented property rather than a surprise during TASK-052's
+                restarts. If it ever needs to change, it needs a new entry
+                point in the fork, not a change here.
+
+              - AND THE VELOCITIES IT RETURNS ARE ALL ZERO, the ball's
+                included. A reset clears the baseline `get_state()` differences
+                against (RSIM_FACTS trap 4), so the frame `place()` returns
+                reads zero for everything. The ball really is moving if you
+                gave it a velocity; you cannot see it until the next `step()`.
+                Anything computing a reward or a done-condition from the frame
+                `place()` returns will read a stopped world.
+
+              - `place()` does NOT rewind `self._t`. It is a mid-episode
+                teleport; only `reset()` starts an episode.
+
+              - THE BACKEND NOW CACHES ITS LAST `WorldState` (`self._last`),
+                because `place()` needs the current poses and asking rSim for
+                them would mean a second `get_state()` — which zeroes every
+                velocity in the following frame (RSIM_FACTS trap 4). The
+                once-per-step rule is still honoured exactly.
+
+              - *** A FALSE GREEN WORTH KNOWING ABOUT. *** My first check of
+                the split reported "Success: no issues found" and proved
+                nothing: mypy could not resolve `tbots` from a file outside the
+                repo (the editable install is a `.pth`, which mypy does not
+                execute), so `--ignore-missing-imports` turned every tbots name
+                into `Any` and silently checked nothing. `reveal_type` showed
+                `Any` and caught it. `MYPYPATH=src` fixes it. This affects
+                `make lint` too: `mypy src/tbots/core` works only because the
+                path is passed directly, and there is no `[tool.mypy]` section
+                in `pyproject.toml` to make it robust. Worth adding one.
+
+              - FOUND, NOT FIXED: `RSimBackend._pad()` still TRUNCATES a
+                scenario that has more robots than the backend was built for
+                (`poses[:n]`), silently. That is the same shape of defect as
+                the dropped commands this task fixed — `Scenario.kickoff()`
+                against `RSimBackend(n_us=2)` quietly drops four robots and
+                trains on a 2v2 that the caller believes is 6v6. Left alone
+                deliberately: it is outside TASK-072's scope and changing it
+                could break a workflow nobody asked me to change. Suggest
+                folding it into TASK-004.
+
+              - SETUP.md Step 9 has been brought back in line: 9.1 and 9.2 now
+                carry the live `base.py` and `rsim.py`, and 9.2a (which taught
+                curriculum-by-`reconfigure()`) and Step 14.5's `promote_when`
+                paragraph carry "Superseded 2026-09-07" notes in the style of
+                9.3. Its design points (a) and (b) — fixed observation size,
+                constant field geometry — survive the change and are kept.
