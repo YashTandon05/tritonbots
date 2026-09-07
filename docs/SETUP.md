@@ -842,16 +842,21 @@ import robosim
 
 N_BLUE, N_YELLOW = 6, 6
 N_ROBOTS = N_BLUE + N_YELLOW
-TIME_STEP_MS = 16  # ~60 Hz
-DT = TIME_STEP_MS / 1000.0
+# Seconds, as a float. Our fork overloads the constructor on this argument's
+# TYPE -- an int is milliseconds, a float is seconds -- so `1.0 / 60.0` is an
+# exact 60 Hz and `16` would be 16 ms. See PART 6. Upstream had only the
+# integer-millisecond form, which cannot express 1/60 at all.
+DT = 1.0 / 60.0
 
 
 def make(field_type):
-    """Construct an SSL world. Positional args only; the pybind11 signature is
-    SSL(fieldType, nRobotsBlue, nRobotsYellow, timeStep_ms,
-        ballPos, blueRobotsPos, yellowRobotsPos)."""
+    """Construct an SSL world. The pybind11 signature is
+    SSL(fieldType, nRobotsBlue, nRobotsYellow, timeStep_s: float,
+        ballPos, blueRobotsPos, yellowRobotsPos),
+    with a `timeStep_ms: int` overload kept for rSoccer. Arguments are named
+    as of our fork; they used to be positional-only."""
     return robosim.SSL(
-        field_type, N_BLUE, N_YELLOW, TIME_STEP_MS,
+        field_type, N_BLUE, N_YELLOW, DT,
         [0.0, 0.0, 0.0, 0.0],
         [[-0.5 - 0.2 * i, 0.0, 0.0] for i in range(N_BLUE)],
         [[0.5 + 0.2 * i, 0.0, 180.0] for i in range(N_YELLOW)],
@@ -987,7 +992,7 @@ def body_action(vx=0.0, vy=0.0, vw=0.0, robot=0):
 print("4a. Place robots at known headings, read the reported heading back:")
 known = [0.0, 45.0, 90.0, 135.0, 180.0, 270.0]
 sim = robosim.SSL(
-    FIELD_TYPE, N_BLUE, N_YELLOW, TIME_STEP_MS, [0.0, 0.0, 0.0, 0.0],
+    FIELD_TYPE, N_BLUE, N_YELLOW, DT, [0.0, 0.0, 0.0, 0.0],
     [[-1.0 - 0.3 * i, 0.0, known[i]] for i in range(N_BLUE)],
     [[1.0 + 0.3 * i, 0.0, 0.0] for i in range(N_YELLOW)],
 )
@@ -1005,7 +1010,7 @@ print("    [0, 360). A heading of exactly zero reports as 360.)")
 print()
 print("4b. Command vangular = 3.0 and measure the achieved rate:")
 sim = robosim.SSL(
-    FIELD_TYPE, N_BLUE, N_YELLOW, TIME_STEP_MS, [0.0, 0.0, 0.0, 0.0],
+    FIELD_TYPE, N_BLUE, N_YELLOW, DT, [0.0, 0.0, 0.0, 0.0],
     [[-1.0 - 0.3 * i, 0.0, 0.0] for i in range(N_BLUE)],
     [[1.0 + 0.3 * i, 0.0, 0.0] for i in range(N_YELLOW)],
 )
@@ -1036,7 +1041,7 @@ print("at the PREVIOUS getState() call, and always divides by exactly one")
 print("timeStep -- never by the time actually elapsed. Consequences:")
 print()
 sim = robosim.SSL(
-    FIELD_TYPE, N_BLUE, N_YELLOW, TIME_STEP_MS, [0.0, 0.0, 0.0, 0.0],
+    FIELD_TYPE, N_BLUE, N_YELLOW, DT, [0.0, 0.0, 0.0, 0.0],
     [[-1.0 - 0.3 * i, 0.0, 0.0] for i in range(N_BLUE)],
     [[1.0 + 0.3 * i, 0.0, 0.0] for i in range(N_YELLOW)],
 )
@@ -1058,15 +1063,48 @@ print("        the state array is wrong. Robot commanded at 1.0 m/s reads back")
 print("        as ~10 m/s above purely from calling get_state() too rarely.")
 print()
 print("=" * 70)
+print("PART 6 - the timestep is exact, and it is a float")
+print("=" * 70)
+print("Upstream's binding took an integer number of milliseconds. 1/60 s is")
+print("16.667 ms, so a 60 Hz caller passed 17 and got 58.8 Hz -- silently, "
+      "because")
+print("getState() divides its velocities by the same wrong number and they")
+print("read back correct. Only simulated time drifts. Our fork adds a float-")
+print("seconds overload; this is what it does.")
+print()
+sim = robosim.SSL(
+    FIELD_TYPE, 1, 0, DT, [0.0, 0.0, 0.0, 0.0], [[-2.0, 0.0, 0.0]], [],
+)
+print(f"  SSL(..., {DT!r}, ...)   -> time_step = {sim.time_step!r}")
+ms = robosim.SSL(
+    FIELD_TYPE, 1, 0, 17, [0.0, 0.0, 0.0, 0.0], [[-2.0, 0.0, 0.0]], [],
+)
+print(f"  SSL(..., 17, ...)                        -> time_step = "
+      f"{ms.time_step!r}   (int = milliseconds)")
+print()
+print("Travel at a commanded 1.0 m/s, measured from steady state so the motor")
+print("ramp is not in the number:")
+for _ in range(60):                         # spin up
+    sim.step(body_action(vx=1.0))
+x0 = np.asarray(sim.get_state())[BALL_STRIDE + 0]
+for _ in range(60):                         # exactly one second
+    sim.step(body_action(vx=1.0))
+x1 = np.asarray(sim.get_state())[BALL_STRIDE + 0]
+print(f"  60 ticks of travel = {x1 - x0:.5f} m   (1.02000 before the fix)")
+print()
+print("ANSWER: pass dt as a float in SECONDS. int is still milliseconds.")
+print()
+print("=" * 70)
 print("SUMMARY")
 print("=" * 70)
 print(f"  Division B field_type   = {div_b_field_type}")
 print(f"  BALL_STRIDE             = {BALL_STRIDE}")
 print(f"  ROBOT_STRIDE            = {ROBOT_STRIDE}")
-print(f"  action vector length    = 8")
-print(f"  state angles / poses    = degrees, heading in (0, 360], vdir in deg/s")
-print(f"  commanded vangular      = radians/second   <-- asymmetric, mind this")
-print(f"  get_state()             = must be called exactly once per step()")
+print("  action vector length    = 8")
+print("  state angles / poses    = degrees, heading in (0, 360], vdir in deg/s")
+print("  commanded vangular      = radians/second   <-- asymmetric, mind this")
+print("  get_state()             = must be called exactly once per step()")
+print(f"  timestep                = float seconds; {DT!r} s is exact 60 Hz")
 ```
 
 Run it and **save the output**:
@@ -1820,9 +1858,17 @@ class RSimBackend(Backend):
         them = self._pad(scenario.them, self._n_them, default_x=1.0)
 
         if self._sim is None:
+            # float(self._dt), not int milliseconds. The binding overloads on
+            # the timestep's TYPE: an int is milliseconds, a float is seconds
+            # (our fork, see docs/RSIM_FACTS.md). The old
+            # `int(round(dt * 1000))` gave 17 for 60 Hz, so physics advanced
+            # 17 ms per step while `self._t` advanced 1/60 s -- 2% of drift a
+            # second, silent, and invisible in the state array because
+            # velocities are divided by that same 17 ms. The float() is not
+            # decoration: pass an int dt and you are back on the old path.
             self._sim = robosim.SSL(
                 self._field_type, self._n_us, self._n_them,
-                int(round(self._dt * 1000.0)), ball, us, them,
+                float(self._dt), ball, us, them,
             )
             raw = np.asarray(self._sim.get_state(), dtype=np.float64)
             if len(raw) != self._expected_state_len:

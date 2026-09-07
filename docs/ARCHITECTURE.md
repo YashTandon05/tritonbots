@@ -69,9 +69,11 @@ itself. Full detail in `docs/RSIM_FACTS.md`:
 - Angles are degrees coming out and radians per second going in.
 - `get_state()` must be called exactly once per `step()` or velocities are
   wrong.
-- **The timestep is an integer number of milliseconds.** `1/60 s` becomes
-  17 ms, which is 58.8 Hz. Our fork will accept a `double` seconds timestep
-  so training really runs at 60 Hz (TASK-070).
+- **The timestep is a float in seconds — but an int still means
+  milliseconds.** Upstream took only an integer number of milliseconds, so
+  `1/60 s` became 17 ms and training ran at 58.8 Hz while believing it ran at
+  60. Our fork added a `double`-seconds constructor overload (TASK-070, done
+  2026-09-07); the int overload survives for rSoccer. Pass `float(dt)`.
 
 Both packages are unmaintained since 2021, so we forked both. See §10 for
 the fork policy.

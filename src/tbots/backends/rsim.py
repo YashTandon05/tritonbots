@@ -87,9 +87,17 @@ class RSimBackend(Backend):
         them = self._pad(scenario.them, self._n_them, default_x=1.0)
 
         if self._sim is None:
+            # float(self._dt), not int milliseconds. The binding overloads on
+            # the timestep's TYPE: an int is milliseconds, a float is seconds
+            # (our fork, see docs/RSIM_FACTS.md). The old
+            # `int(round(dt * 1000))` gave 17 for 60 Hz, so physics advanced
+            # 17 ms per step while `self._t` advanced 1/60 s -- 2% of drift a
+            # second, silent, and invisible in the state array because
+            # velocities are divided by that same 17 ms. The float() is not
+            # decoration: pass an int dt and you are back on the old path.
             self._sim = robosim.SSL(
                 self._field_type, self._n_us, self._n_them,
-                int(round(self._dt * 1000.0)), ball, us, them,
+                float(self._dt), ball, us, them,
             )
             raw = np.asarray(self._sim.get_state(), dtype=np.float64)
             if len(raw) != self._expected_state_len:

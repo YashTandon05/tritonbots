@@ -1436,3 +1436,121 @@ Notes:        - The two presets differ in more than size: `2020` mounts TWO
                 endpoint and is not. To observe a real push: stop the
                 simulator, restart the client, connect, then start the
                 simulator.
+
+## TASK-070 — rSim runs at 60 Hz, not 58.8   [PASS]
+Verification: `pytest tests/test_rsim_backend.py` (7 passed), of which the
+              gate is `test_sixty_steps_is_one_second_of_travel`:
+
+                before   1.0199999879350568 m  -> FAILS (1.0 +/- 0.01)
+                after    1.00000            m  -> PASSES
+
+              Measured from STEADY STATE, not from rest. A robot commanded
+              1.0 m/s needs ~25 ticks to spin up through the motor model, and
+              covers only 0.87 m over its first 60 ticks. That ramp is
+              physics; timing it would have measured the wrong thing. Per-tick
+              displacement at steady state is the clean signal:
+
+                before   0.017000 m/tick   (60 ticks = 1.02000 m)
+                after    0.016667 m/tick   (60 ticks = 1.00000 m)
+
+              Exactly 2 cm of error per simulated second, which is the 17 ms
+              vs 16.667 ms difference and nothing else.
+
+              Two further tests pin the CAUSE rather than the symptom:
+              `test_simulator_timestep_is_the_backend_dt` asserts
+              `sim.time_step == backend.dt`, and
+              `test_a_non_default_dt_reaches_the_simulator` runs at 1/120 s
+              and re-checks after a `reset()`, since `reset()` rebuilds the
+              world and used to requantise the step.
+
+              Full suite 37 passed / 1 skipped; `make lint` clean.
+              `scripts/verify_rsim.py` re-run end to end: all four TASK-001
+              facts reproduce unchanged (notably PART 4's 162.85 deg/s =
+              2.842 rad/s, bit-identical to the 2026-08-10 run), so the
+              timestep change perturbed no other conclusion.
+              `docs/RSIM_FACTS.md` regenerated from that run.
+
+Deviations:   Four, all additive to what TASK-070 asked for.
+
+              1. THE OVERLOAD IS RESOLVED BY TYPE, AND THAT NEEDED PROVING.
+              The task says "add a double seconds overload, keep the int
+              overload for rSoccer" -- which only works if pybind11 reliably
+              routes an int to one and a float to the other. Tested all six
+              call shapes (positional and keyword, float lists and int lists):
+              all correct. The one that worried me was ints inside `ballPos`
+              or a robot pose, because pybind11's overload resolution runs a
+              strict pass over the WHOLE signature and then a converting pass:
+              a stray int in a list could in principle fail the strict pass
+              and let the converting pass hand a float timestep to the
+              millisecond overload, where 1/60 truncates to 0 ms.
+              MEASURED: it does not. pybind11 2.13 refuses to narrow a float
+              into an int argument even when converting, so the millisecond
+              overload cannot take a float at all. The hazard is real in
+              shape and absent in this version.
+
+              2. `.noconvert()` ON BOTH TIMESTEP ARGUMENTS ANYWAY. Given (1)
+              it changes no behaviour we can observe today. It is there so the
+              int/float split is a property of OUR binding rather than of
+              pybind11's arithmetic-caster policy, which is a detail of a
+              vendored dependency and invisible at the call site. I first
+              wrote the opposite claim into the source comment -- that
+              .noconvert() was load-bearing -- then tested it, found it false,
+              and rewrote the comment to say what was actually measured.
+
+              3. ARGUMENTS ARE NOW NAMED. `.noconvert()` requires a `py::arg`,
+              and pybind11 requires all-or-none, so the binding went from
+              positional-only to seven named arguments. This is a feature
+              here: `timeStep_ms` vs `timeStep_s` now shows up in
+              `help(robosim.SSL)`, and the whole bug was a units confusion
+              that a reader could not see at the call site. `docs/RSIM_FACTS.md`
+              said "positional only -- the binding declares no argument
+              names"; that line is now wrong and has been corrected.
+
+              4. `SSL.time_step` PROPERTY. The gate needs to assert what the
+              simulator actually stepped at, and there was no way to ask. It
+              always reads back in seconds, whichever constructor was used.
+
+              Two things deliberately NOT done:
+              - VSS keeps its millisecond-only constructor. We do not use VSS,
+                so an overload there would be untested code shipped on
+                symmetry alone.
+              - `RSimBackend.dt` is unchanged and still defaults to 1/60.
+
+Notes:        - `SSL(..., 17.0, ...)` IS SEVENTEEN SECONDS. The overload keys
+                on type, not magnitude, and a float is always seconds. There
+                is no plausible timestep where the two readings overlap, so
+                this cannot be disambiguated by value and should not be: it is
+                in the RSIM_FACTS table and in the binding's comment.
+
+              - THE STORED TIMESTEP HAD TO MOVE TO SECONDS TOO, which the task
+                did not mention. `SSL::reset()` tears down and rebuilds the
+                whole `SSLWorld` (it does not rewind it), so it re-passes the
+                stored timestep. Left as the `int m_timeStep_ms` member, the
+                constructor would have honoured 1/60 and then the first
+                `reset()` would have quantised it back to 17 ms -- meaning
+                episode 1 at 60 Hz and every episode after it at 58.8, which
+                is a far nastier bug than the one being fixed.
+                `test_a_non_default_dt_reaches_the_simulator` re-checks after
+                a reset for exactly this reason.
+
+              - WHY THIS WAS INVISIBLE, worth internalising before trusting
+                any other rSim number: the state array's velocities are
+                finite-differenced and divided by the SAME wrong timestep, so
+                they read back correct to full precision. A robot at 1 m/s
+                reported `vx = 1.0` throughout. Nothing in the state array,
+                and nothing in any velocity-based test, could have caught
+                this. It was found by the architecture review reading the C++,
+                and the only observable was position integrated over time.
+
+              - CI needs no change: `.github/workflows/ci.yml` already
+                checks out submodules recursively and runs
+                `uv pip install -e third_party/rsim`, so the bumped pointer
+                builds the new binding on every push. TASK-004 will pin the
+                60 Hz timestep as a CI-guarded constant.
+
+              - Fork: YashTandon05/rSim `56d0253`, pushed to `main`.
+                Submodule pointer bumped 4e4619c -> 56d0253. C++ changes still
+                require `uv pip install -e third_party/rsim` (the fork
+                deliberately does not set `editable.rebuild`), so anyone
+                pulling this must reinstall or they will keep the old .so and
+                the old physics.

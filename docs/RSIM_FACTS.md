@@ -1,7 +1,7 @@
 # rSim facts — VERIFIED, do not guess
 
-Verified on: 2026-08-10
-rSim commit: `69f0d8e24a41d76fc67d27e8cabd9d99193ac444` (our fork, YashTandon05/rSim)
+Verified on: 2026-09-07 (first verified 2026-08-10)
+rSim commit: `56d02532f406987a9b9fee59b12da9b33468af1e` (our fork, YashTandon05/rSim)
 Python 3.11.15, ODE 0.16.2 double-precision from `/usr/local/lib/libode.so.8`
 
 Regenerate with `python scripts/verify_rsim.py` after **any** rSim fork update.
@@ -77,15 +77,34 @@ difference against. `RSimBackend._observe()` satisfies this as long as it is
 called exactly once per `step()` — do not add extra `get_state()` calls for
 logging or rendering.
 
-**5. The timestep is an integer number of milliseconds.** The pybind11
-binding is `SSL(fieldType, nBlue, nYellow, timeStep_ms: int, ...)` and the
-wrapper divides by 1000.0 before handing it to `SSLWorld`. Passing
-`int(round(1/60 * 1000))` gives 17, so physics advances 17 ms per step
-(58.8 Hz) while `RSimBackend._t` advances 1/60 s. Velocities in the state
-array are still correct (they are divided by the same 0.017), but simulated
-time drifts 2% from the reported time and the control rate is not 60 Hz.
-Found 2026-09-04 in the architecture review. TASK-070 adds a `double`
-seconds overload to our fork so the backend can pass `dt` through exactly.
+**5. The timestep is a float in SECONDS — but an int still means
+milliseconds.** FIXED 2026-09-07 (TASK-070); read this before you write
+`SSL(...)` by hand.
+
+Upstream's binding was `SSL(..., timeStep_ms: int, ...)` and divided by 1000.0
+before handing the value to `SSLWorld`, which has always taken seconds as a
+double. A 60 Hz caller therefore had to pass `int(round(1/60 * 1000))` = 17,
+and physics advanced 17 ms per step — 58.8 Hz — while `RSimBackend._t`
+advanced 1/60 s. Nothing errored and nothing looked wrong: `getState()`
+divides its finite-differenced velocities by that same 0.017, so they read
+back correct. Only simulated time drifted, 2% fast, silently. Measured: a
+robot holding a commanded 1.0 m/s covered **1.02000 m** per 60 ticks.
+
+Our fork adds a `double`-seconds constructor. The overload is chosen by the
+argument's **type**:
+
+| You pass | Means | 60 Hz |
+|---|---|---|
+| `1.0 / 60.0` (float) | seconds, used exactly | ✅ |
+| `17` (int) | milliseconds, as before | ❌ 58.8 Hz |
+| `17.0` (float) | **17 seconds**, and it will be honoured | ❌ |
+
+The same 60 ticks now cover **1.00000 m**. `RSimBackend` passes
+`float(self._dt)`; the `float()` is load-bearing, not decoration. The int
+overload is kept so rSoccer, which passes ints, is unaffected.
+
+`SSL.time_step` reads the value back, always in seconds, whichever
+constructor was used — assert against it rather than recomputing.
 
 ## Smaller quirks
 
@@ -109,16 +128,32 @@ seconds overload to our fork so the backend can pass `dt` through exactly.
 
 ## Constructor signature (from the pybind11 binding, not assumed)
 
+Two overloads, differing only in the timestep. Use the first.
+
 ```
-SSL(fieldType: int, nRobotsBlue: int, nRobotsYellow: int, timeStep_ms: int,
+SSL(fieldType: int, nRobotsBlue: int, nRobotsYellow: int,
+    timeStep_s: float,               # SECONDS. 1.0/60.0 for 60 Hz.
     ballPos: list[float],            # [x, y, vx, vy]
     blueRobotsPos: list[list[float]],   # [[x, y, dir_degrees], ...]
     yellowRobotsPos: list[list[float]]) # [[x, y, dir_degrees], ...]
+
+SSL(fieldType: int, nRobotsBlue: int, nRobotsYellow: int,
+    timeStep_ms: int,                # MILLISECONDS. Legacy; for rSoccer.
+    ballPos, blueRobotsPos, yellowRobotsPos)
 ```
 
-Positional only — the binding declares no argument names. Methods:
-`step(actions)`, `get_state()`, `reset(ballPos, bluePos, yellowPos)`,
-`get_field_params()`.
+Arguments are **named** as of our fork (`fieldType`, `nRobotsBlue`,
+`nRobotsYellow`, `timeStep_s` / `timeStep_ms`, `ballPos`, `blueRobotsPos`,
+`yellowRobotsPos`); upstream declared none and was positional-only. Both
+timestep arguments are `.noconvert()`, so the int/float distinction holds no
+matter what the other six arguments look like.
+
+Methods: `step(actions)`, `get_state()`, `reset(ballPos, bluePos, yellowPos)`,
+`get_field_params()`. Property: `time_step` — simulated seconds per `step()`,
+always in seconds.
+
+`reset()` reuses the timestep the constructor was given, at full precision;
+it does not requantise.
 
 ---
 
@@ -135,8 +170,8 @@ field_type=1  length=9.0  width=6.0  goal_width=1.0  penalty 1.0x2.0   <-- DIVIS
 field_type=2  length=6.0  width=4.0  goal_width=0.7  penalty 0.8x2.0
 
 ANSWER: Division B is field_type = 1
-Note this contradicts the placeholder FIELD_TYPE_DIV_B = 0 in
-docs/SETUP.md Step 9.2 and field_type: 0 in configs/env/div_b_6v6.yaml.
+This MUST match FIELD_TYPE_DIV_B in backends/rsim.py (Step 9.2)
+and field_type in configs/env/div_b_6v6.yaml (Step 14.3).
 
 ======================================================================
 PART 2 - state array stride
@@ -211,7 +246,7 @@ But the ACTION side is radians:
     [0, 360). A heading of exactly zero reports as 360.)
 
 4b. Command vangular = 3.0 and measure the achieved rate:
-      heading 310.162 -> 28.329 over 0.48s
+      heading 323.172 -> 44.596 over 0.50s
       achieved = 162.85 deg/s = 2.842 rad/s
       commanded 3.0 -> got 2.842 rad/s, not 3 deg/s.
 
@@ -235,6 +270,24 @@ ANSWER: call get_state() EXACTLY ONCE PER step() or every velocity in
         as ~10 m/s above purely from calling get_state() too rarely.
 
 ======================================================================
+PART 6 - the timestep is exact, and it is a float
+======================================================================
+Upstream's binding took an integer number of milliseconds. 1/60 s is
+16.667 ms, so a 60 Hz caller passed 17 and got 58.8 Hz -- silently, because
+getState() divides its velocities by the same wrong number and they
+read back correct. Only simulated time drifts. Our fork adds a float-
+seconds overload; this is what it does.
+
+  SSL(..., 0.016666666666666666, ...)   -> time_step = 0.016666666666666666
+  SSL(..., 17, ...)                        -> time_step = 0.017   (int = milliseconds)
+
+Travel at a commanded 1.0 m/s, measured from steady state so the motor
+ramp is not in the number:
+  60 ticks of travel = 1.00000 m   (1.02000 before the fix)
+
+ANSWER: pass dt as a float in SECONDS. int is still milliseconds.
+
+======================================================================
 SUMMARY
 ======================================================================
   Division B field_type   = 1
@@ -244,5 +297,5 @@ SUMMARY
   state angles / poses    = degrees, heading in (0, 360], vdir in deg/s
   commanded vangular      = radians/second   <-- asymmetric, mind this
   get_state()             = must be called exactly once per step()
-  timestep                = int milliseconds; 1/60 s becomes 17 ms (see trap 5)
+  timestep                = float seconds; 0.016666666666666666 s is exact 60 Hz
 ```
