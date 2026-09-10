@@ -124,3 +124,14 @@ This is rSim's perspective and it is exactly right there: the training
 backend has no colours and no half time, so its world is already ours. It is
 the second adapter that makes this seam real rather than hypothetical.
 """
+
+
+def as_opponent(world: WorldState) -> WorldState:
+    """Return ``world`` from the other team's canonical perspective.
+
+    The other team attacks in the opposite direction, so its view is a 180°
+    rotation. It also calls our robots ``them`` and its own robots ``us``.
+    Applying this helper twice returns the original world.
+    """
+    rotated = Perspective(flip=True).world_state(world)
+    return replace(rotated, us=rotated.them, them=rotated.us)

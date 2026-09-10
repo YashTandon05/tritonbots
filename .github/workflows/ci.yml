@@ -94,5 +94,7 @@ jobs:
       - run: uv pip install -e ".[dev]"
       - run: uv pip install -e third_party/rsim
       - run: make proto
+      - name: Verify rSim facts
+        run: python scripts/verify_rsim.py
       - run: make lint
       - run: make test

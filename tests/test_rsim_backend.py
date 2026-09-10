@@ -1,7 +1,19 @@
+from pathlib import Path
+
 import pytest
+import yaml
 
 from tbots.backends.base import Backend, Scenario, SimBackend
-from tbots.backends.rsim import RSimBackend
+from tbots.backends.rsim import (
+    A_DRIBBLER,
+    A_KICK_CHIP,
+    A_KICK_FLAT,
+    ACTION_LEN,
+    BALL_STRIDE,
+    FIELD_TYPE_DIV_B,
+    ROBOT_STRIDE,
+    RSimBackend,
+)
 from tbots.core.command import RobotCommand
 from tbots.core.geometry import DIV_B, dist
 
@@ -35,9 +47,32 @@ def test_time_advances_by_dt(backend):
 
 
 def test_state_length_matches_constants(backend):
-    # If this fails, BALL_STRIDE / ROBOT_STRIDE are wrong.
-    # Re-run scripts/verify_rsim.py.
+    """Pin the layout verified by scripts/verify_rsim.py.
+
+    Do not derive these expected values from the implementation: that lets a
+    wrong constant and a matching wrong expectation pass together.
+    """
     backend.reset(Scenario.kickoff())
+    assert BALL_STRIDE == 5
+    assert ROBOT_STRIDE == 11
+    assert backend._expected_state_len == 137
+
+
+def test_verified_rsim_constants_match_division_b_and_the_config(backend):
+    """A deliberate rSim-fact edit must fail before it can train bad policies."""
+    backend.reset(Scenario.kickoff())
+    assert FIELD_TYPE_DIV_B == 1
+    assert backend._field_type == 1
+    assert backend._sim.get_field_params()["length"] == 9.0
+    assert backend._sim.get_field_params()["width"] == 6.0
+    assert ACTION_LEN == 8
+    assert (A_KICK_FLAT, A_KICK_CHIP, A_DRIBBLER) == (5, 6, 7)
+
+    config_path = Path(__file__).parents[1] / "configs/env/div_b_6v6.yaml"
+    with config_path.open() as config_file:
+        config = yaml.safe_load(config_file)
+    assert config["backend"]["field_type"] == FIELD_TYPE_DIV_B
+    assert config["control_hz"] == 60
 
 
 def test_sixty_steps_is_one_second_of_travel(backend):
@@ -74,6 +109,8 @@ def test_simulator_timestep_is_the_backend_dt(backend):
     """
     backend.reset(Scenario.single_robot_at(0.0, 0.0))
     assert backend._sim.time_step == backend.dt
+    assert backend.dt == 1.0 / 60.0
+    assert backend._sim.time_step == 1.0 / 60.0
 
 
 def test_a_non_default_dt_reaches_the_simulator():

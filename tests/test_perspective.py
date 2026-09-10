@@ -12,8 +12,8 @@ import pytest
 
 from tbots._pb.state.ssl_gc_referee_message_pb2 import Referee
 from tbots.core.gamestate import Play
-from tbots.core.perspective import IDENTITY, UNRESOLVED, Perspective
-from tbots.core.state import BallState, RobotState, WorldState
+from tbots.core.perspective import IDENTITY, UNRESOLVED, Perspective, as_opponent
+from tbots.core.state import BallState, RobotFeedback, RobotState, WorldState
 from tbots.net.referee import resolve_perspective, to_gamestate
 
 FLIPPED = Perspective(we_are_yellow=False, flip=True)
@@ -93,6 +93,27 @@ def test_world_state_flips_both_teams_and_the_ball():
 def test_identity_world_state_is_the_same_object():
     w = WorldState(t=0.0, ball=BallState(x=0.0, y=0.0))
     assert IDENTITY.world_state(w) is w
+
+
+def test_as_opponent_rotates_swaps_teams_and_is_an_involution():
+    w = WorldState(
+        t=4.0,
+        t_capture=3.95,
+        ball=BallState(x=1.0, y=-2.0, vx=0.5, vy=-0.25),
+        us={1: RobotState(1, -2.0, 1.0, 0.0, vx=0.5, vy=0.25)},
+        them={7: RobotState(7, 3.0, 0.0, math.pi / 2, vx=-1.0, vy=0.5)},
+        telemetry={1: RobotFeedback(robot_id=1, t=4.0, battery=24.0)},
+    )
+
+    opponent = as_opponent(w)
+    assert opponent.us[7].pos == (-3.0, 0.0)
+    assert opponent.us[7].theta == pytest.approx(-math.pi / 2)
+    assert (opponent.us[7].vx, opponent.us[7].vy) == (1.0, -0.5)
+    assert opponent.them[1].pos == (2.0, -1.0)
+    assert opponent.ball.pos == (-1.0, 2.0)
+    assert opponent.t == w.t and opponent.t_capture == w.t_capture
+    assert opponent.telemetry == w.telemetry
+    assert as_opponent(opponent) == w
 
 
 # -- resolution from the referee -------------------------------------------

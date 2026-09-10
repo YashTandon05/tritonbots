@@ -56,6 +56,9 @@ it, because that is where real runs happen.
 | TASK-070 | rSim steps at a true 1/60 s. Our fork's `SSL` takes a float-seconds timestep; an int is still milliseconds. | `tests/test_rsim_backend.py`, `docs/RSIM_FACTS.md` |
 | TASK-071 | The compose stack runs Division B (`GEOMETRY: "2020B"`), verified off the wire and in `ssl-vision-client`. | SETUP_LOG TASK-071 |
 | TASK-072 | `Backend` / `SimBackend` split. Opponents commandable, `place()`, unknown ids raise, `reconfigure()` gone. | `tests/test_rsim_backend.py` |
+| TASK-004 | CI pins the verified rSim field type, layouts, action offsets, and 60 Hz timestep; it also runs the verification probe. | `tests/test_rsim_backend.py`, `.github/workflows/ci.yml` |
+| TASK-073 | `as_opponent()` rotates a world by 180° and exchanges `us` and `them` for self-play. | `tests/test_perspective.py` |
+| TASK-074 | Frozen perception dataclasses, capture time, and telemetry are part of the core world contract. | `tests/test_core.py`, `mypy src/tbots/core` |
 
 **Superseded, not deleted:** TASK-054's `rl/wrappers/domain_rand.py` (Gym
 wrapper on the observation vector). Replaced by `PerceptionSim` (TASK-075).
@@ -74,14 +77,11 @@ Three of the four are done — see §2. What is left:
 
 | ID | Task | Size | Done when |
 |---|---|---|---|
-| **TASK-004** | **CI guards the rSim facts.** `test_state_length_matches_constants` has no assertion. Make it assert; pin `field_type`, strides, `ACTION_LEN`, and the 60 Hz timestep; run `scripts/verify_rsim.py` in CI. | S | A deliberate wrong constant fails CI. |
 
 ### 3.2 Backend and core types
 
 | ID | Task | Size | Done when |
 |---|---|---|---|
-| **TASK-073** | **`as_opponent(world)`** in `core/perspective.py`: rotate 180° and swap `us`/`them`. | S | Test: `as_opponent(as_opponent(w)) == w`, and an opponent at `(+3, 0)` sees itself at `(-3, 0)` in `us`. |
-| **TASK-074** | **Perception types in `core`.** `DetectionFrame`, `RobotFeedback`, `WorldState.t_capture`, `WorldState.telemetry`. `net/vision.py` and `net/robot_control.py` will decode into them; `PerceptionSim` synthesises them. | S | `mypy src/tbots/core` clean; a round-trip test through the frozen dataclasses. |
 
 ### 3.3 Perception in the training loop
 

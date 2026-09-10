@@ -317,6 +317,6 @@ class RSimBackend(SimBackend):
             )
             (us if i < self._n_us else them)[r.robot_id] = r
 
-        self._last = WorldState(t=self._t, ball=ball, us=us, them=them,
-                                game=self._game)
+        self._last = WorldState(t=self._t, t_capture=self._t, ball=ball,
+                                us=us, them=them, game=self._game)
         return self._last

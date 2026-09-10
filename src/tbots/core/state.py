@@ -8,6 +8,58 @@ from tbots.core.gamestate import HALT, GameState
 
 
 @dataclass(frozen=True, slots=True)
+class DetectionBall:
+    """One ball candidate reported by SSL-Vision, in field coordinates."""
+
+    x: float
+    y: float
+    z: float = 0.0
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class DetectionRobot:
+    """One colour-labelled robot candidate reported by SSL-Vision.
+
+    Detection packets contain a pose, not a velocity estimate. Velocity is
+    deliberately the tracker's responsibility.
+    """
+
+    robot_id: int
+    x: float
+    y: float
+    theta: float
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class DetectionFrame:
+    """A single camera's raw, field-frame observations.
+
+    Colours remain wire-level facts here. The tracker applies ``Perspective``
+    only after it has associated and estimated the observations.
+    """
+
+    t_capture: float
+    camera_id: int
+    balls: tuple[DetectionBall, ...] = ()
+    robots_blue: tuple[DetectionRobot, ...] = ()
+    robots_yellow: tuple[DetectionRobot, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RobotFeedback:
+    """Telemetry reported by one robot, in canonical units where applicable."""
+
+    robot_id: int
+    t: float
+    has_ball: bool = False
+    battery: float | None = None
+    kick_charge: float | None = None
+    wheel_speeds: tuple[float, float, float, float] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RobotState:
     robot_id: int
     x: float
@@ -52,6 +104,12 @@ class WorldState:
     us: dict[int, RobotState] = field(default_factory=dict)
     them: dict[int, RobotState] = field(default_factory=dict)
     game: GameState = HALT
+    # Timestamp of the newest camera observation. ``t`` is the timestamp the
+    # tracked state is valid for; rSim has no latency, so it sets this to t.
+    t_capture: float | None = None
+    # Feedback belongs to our controllable robots. Hardware cannot provide
+    # opponent telemetry, so keep the same shape in simulation.
+    telemetry: dict[int, RobotFeedback] = field(default_factory=dict)
 
     def closest_to_ball(self, robots: dict[int, RobotState]) -> RobotState | None:
         if not robots:
