@@ -130,13 +130,18 @@ def test_coach_blocks_ball_and_defense_area_violations():
         world(game=running, ball=(0.0, 0.0), robots={0: (-0.51, 0.0)})
     )[0] == RobotCommand(0)
 
-    area_game = GameState(play=Play.RUN, can_move=True, min_ball_distance=0.0)
+    area_game = GameState(
+        play=Play.RUN,
+        can_move=True,
+        min_ball_distance=0.0,
+        our_goalkeeper=1,
+    )
     own_area_coach = Coach(forward, DIV_B)
     assert own_area_coach.tick(world(game=area_game, robots={0: (-3.6, 0.0)}))[0] == RobotCommand(0)
 
     stopped = GameState(play=Play.STOP, can_move=True, min_ball_distance=0.0)
     their_area_coach = Coach(forward, DIV_B)
-    assert their_area_coach.tick(world(game=stopped, robots={0: (3.25, 0.0)}))[0] == RobotCommand(0)
+    assert their_area_coach.tick(world(game=stopped, robots={0: (3.35, 0.0)}))[0] == RobotCommand(0)
 
 
 def test_coach_rejects_bad_tactic_assignments():
