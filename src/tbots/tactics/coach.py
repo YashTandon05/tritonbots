@@ -100,7 +100,10 @@ class Coach:
                 robot.pos, next_pos, world.ball.pos, game.min_ball_distance):
             return stop(command.robot_id)
 
-        if command.robot_id != game.our_goalkeeper and self.geometry.inside_our_defense_area(*next_pos):
+        if (
+            command.robot_id != game.our_goalkeeper
+            and self.geometry.inside_our_defense_area(*next_pos)
+        ):
             return stop(command.robot_id)
 
         if game.play is not Play.RUN and self._inside_inflated_their_defense_area(next_pos, 0.20):
@@ -115,7 +118,10 @@ class Coach:
 
     @staticmethod
     def _violates_ball_distance(
-        current: tuple[float, float], candidate: tuple[float, float], ball: tuple[float, float], minimum: float,
+        current: tuple[float, float],
+        candidate: tuple[float, float],
+        ball: tuple[float, float],
+        minimum: float,
     ) -> bool:
         # A robot already inside the exclusion radius must stop; a controller
         # cannot safely repair that in one tick.  Otherwise reject only motion

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pytest
 
@@ -126,7 +126,9 @@ def test_coach_blocks_ball_and_defense_area_violations():
     forward = FixedTactic([Assignment(0, SkillSpec("test_constant_command", {"vx": 4.0}))])
     running = GameState(play=Play.RUN, can_move=True, min_ball_distance=0.5)
     ball_coach = Coach(forward, DIV_B)
-    assert ball_coach.tick(world(game=running, ball=(0.0, 0.0), robots={0: (-0.51, 0.0)}))[0] == RobotCommand(0)
+    assert ball_coach.tick(
+        world(game=running, ball=(0.0, 0.0), robots={0: (-0.51, 0.0)})
+    )[0] == RobotCommand(0)
 
     area_game = GameState(play=Play.RUN, can_move=True, min_ball_distance=0.0)
     own_area_coach = Coach(forward, DIV_B)
